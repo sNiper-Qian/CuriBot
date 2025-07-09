@@ -12,15 +12,14 @@ import numpy as np
 import time
 import math
 import cv2
-import torch
+# import torch
 import matplotlib.pyplot as plt
-from torchvision import transforms
-from PIL import Image
+# from torchvision import transforms
+# from PIL import Image
 
 class SimpleEnv:
     def __init__(self, render = False, Test_env=False):
-
-        self.robot_urdf = "/home/gentlebear/Mres/dinobot/assets/franka_description/robots/franka_panda.urdf"
+        self.robot_urdf = "assets/franka_description/robots/franka_panda_ee.urdf"
         self.ball = None
         self.target = None
         self.objects = []
@@ -36,8 +35,9 @@ class SimpleEnv:
         self.gripper_joints = [8, 9]
         self.gripper_open_pos = 0.04
         self.gripper_close_pos = 0.015
+        self.current_gripper_state = 1.0
         self.setup_env()
-        self.dof = p.getNumJoints(self.robot, physicsClientId=self.client) - 1
+        self.dof = p.getNumJoints(self.robot, physicsClientId=self.client)
         self.robot_data = {}
         self.num_actions = 8
         # print("Number of dof: ", self.dof)
@@ -54,7 +54,6 @@ class SimpleEnv:
             }
         # print("Joint names: ", [self.robot_data[f"joint_{j}"]["name"] for j in range(self.dof)])
         initial_value, inital_velocity = self.getJointStates()
-        self.object_initial_position, self.object_initial_orientation = p.getBasePositionAndOrientation(self.object_id, physicsClientId=self.client)
         joint_states = p.getJointStates(self.robot, self.joint_id)
         # print("Joint states: ", joint_states)
         self.initial_torque = [x[3] for x in joint_states]
@@ -64,58 +63,31 @@ class SimpleEnv:
         self.initial_value = initial_value
         self.initial_velocity = inital_velocity
         # self.IKmodel = IK.IKSolver(self.robot_urdf, "panda_hand", [0, 0, 0, 0], np.eye(4))
-
+        self.attachments = []
 
     def setup_env(self):
-        
         if self.render:
             self.client = p.connect(p.GUI)
         else:
             self.client = p.connect(p.DIRECT)
         # import pybullet_data
         # p.setAdditionalSearchPath(pybullet_data.getDataPath())
-        plane_id = p.loadURDF("/home/gentlebear/Mres/dinobot/assets/plane/plane.urdf")
+        plane_id = p.loadURDF("assets/plane/plane.urdf")
         p.setTimeStep(1 / 1000, physicsClientId=self.client)
         p.setPhysicsEngineParameter(solverResidualThreshold=0, physicsClientId=self.client)
         p.setPhysicsEngineParameter(numSolverIterations=200)
 
         p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0, physicsClientId=self.client)
         p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1, physicsClientId=self.client)
-        robot_idx = p.loadURDF(self.robot_urdf, useFixedBase=True, physicsClientId=self.client)
-
-        p.resetDebugVisualizerCamera(cameraDistance=2, cameraYaw=80, cameraPitch=-30, cameraTargetPosition=[0, 0, 0], physicsClientId=self.client)
-        # set_robot_to_reasonable_position(robot_idx)
-        p.changeDynamics(robot_idx, 8, linearDamping=0, lateralFriction=1, physicsClientId=self.client)
-        p.changeDynamics(robot_idx, 9, linearDamping=0, lateralFriction=1, physicsClientId=self.client)
-
-        reasonable_joint_numbers = list(range(0,7))
-        reasonable_joint_positions = [0, -math.pi / 4, 0, -3 * math.pi / 4, 0, math.pi / 2, math.pi / 4]
-
-        for joint, value in zip(reasonable_joint_numbers, reasonable_joint_positions):
-            p.resetJointState(robot_idx, joint, targetValue=value, targetVelocity=0, physicsClientId=self.client)
-        noise = np.random.uniform(-0.1, 0.1)
-        noise = 0.0
-        print("Noise: ", noise)
-        self.robot = robot_idx
-        if not self.test:
-            self.object_id = self.load_urdf_object("/home/gentlebear/Mres/dinobot/assets/pybullet_object_models/ycb_objects/YcbBanana/model.urdf", position=(0.52, 0.04, 0.1))
-            # self.object_id = self.load_urdf_object("/home/gentlebear/Mres/dinobot/assets/pybullet_object_models/ycb_objects/YcbPottedMeatCan/model.urdf", position=(0.5, 0, 0.1), globalScale=0.8)
-            # self.object_id = self.load_urdf_object("/home/gentlebear/Mres/dinobot/assets/pybullet_object_models/cube/red_cube.urdf", position=(0.5, 0, 0.1))
-        else:
-            # self.object_id = self.load_urdf_object("/home/gentlebear/Mres/dinobot/assets/pybullet_object_models/cube/blue_cube.urdf", position=(0.6, 0, 0.1))
-            # self.object_id = self.load_urdf_object("/home/gentlebear/Mres/dinobot/assets/pybullet_object_models/ycb_objects/YcbPottedMeatCan/model.urdf", position=(0.5+noise, 0+noise, 0.1), globalScale=0.8)
-            self.object_id = self.load_urdf_object("/home/gentlebear/Mres/dinobot/assets/pybullet_object_models/ycb_objects/YcbBanana/model.urdf", position=(0.52+noise, 0.04+noise, 0.1))
-            # self.object_id = self.load_urdf_object("/home/gentlebear/Mres/dinobot/assets/pybullet_object_models/ycb_objects/YcbPowerDrill/model.urdf", position=(0.5, 0.1, 0.1), globalScale=0.7)
-            # self.object_id = self.load_urdf_object("/home/gentlebear/Mres/dinobot/assets/pybullet_object_models/ycb_objects/YcbScissors/model.urdf", position=(0.5, 0.1, 0.1), globalScale=1)
-            # self.load_urdf_object("/home/gentlebear/Mres/dinobot/assets/pybullet_object_models/cube/red_cube.urdf", position=(0.35, 0, 0.55), globalScale=0.5)
+        self.robot = p.loadURDF(self.robot_urdf, useFixedBase=True, physicsClientId=self.client)
         # disable shadows
         p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 0)
-        p.setGravity(0, 0, -9.8, physicsClientId=self.client)
+        p.setGravity(0, 0, 0.0, physicsClientId=self.client)
         # initial env
         self.simulate_step()
         # time.sleep(1 / 1000)
 
-    def load_urdf_object(self, urdf_path, position=(0, 0, 0), orientation=(0, 0, 0, 1), globalScale=0.8):
+    def load_urdf_object(self, urdf_path, position=(0, 0, 0), orientation=(0, 0, 0, 1), globalScale=1.5):
         """
         Load a URDF model and add it to the environment.
         
@@ -124,6 +96,7 @@ class SimpleEnv:
             position (tuple): Initial position of the object (x, y, z).
             orientation (tuple): Initial orientation as a quaternion (x, y, z, w).
         """
+        print(f"Loading URDF object from {urdf_path} at position {position} with orientation {orientation} and global scale {globalScale}")
         object_id = p.loadURDF(urdf_path, basePosition=position, baseOrientation=orientation, globalScaling=globalScale)
         self.objects.append(object_id)
         return object_id
@@ -137,6 +110,14 @@ class SimpleEnv:
         else:
             self.render = False
             self.setup_env()
+    
+    def set_gripper_open(self):
+        self.resetTargetPositions([0.04, 0.04])
+        self.current_gripper_state = 1.0
+    
+    def set_gripper_close(self):
+        self.resetTargetPositions([0.015, 0.015])
+        self.current_gripper_state = 0.0
         
     def get_state(self):
         joint_states, _ = self.getJointStates()
@@ -152,6 +133,31 @@ class SimpleEnv:
         ee_pos_in_world = np.dot(base_ori_matrix, np.array(ee_pos)) + np.array(base_pos)
         obj_pos, obj_ori = p.getBasePositionAndOrientation(self.object_id, physicsClientId=self.client)
         return joint_states, obj_pos, obj_ori
+    
+    def disable_robot_dynamics(self):
+        """
+        Disable dynamics for the robot in the environment.
+        """
+        num_joints = p.getNumJoints(self.robot)
+    
+        # Disable for base (-1) and all links
+        for link_index in range(-1, num_joints):
+            # Set mass to 0 (static)
+            p.changeDynamics(self.robot, link_index, mass=0)
+
+            # Disable collision by setting group and mask to 0
+            p.setCollisionFilterGroupMask(self.robot, link_index, collisionFilterGroup=0, collisionFilterMask=0)
+
+    def disable_body_dynamics(self, body_id):
+        """
+        Disable dynamics for a specific body in the environment.
+        
+        Args:
+            body_id (int): Unique ID of the body to disable dynamics for.
+        """
+        p.setCollisionFilterGroupMask(body_id, -1, 0, 0)  # No collisions
+        p.changeDynamics(body_id, -1, mass=0)             # Static
+        p.resetBaseVelocity(body_id, [0, 0, 0], [0, 0, 0]) # No movement
 
     def setTargetPositions(self, target_joint_positions):
         """
@@ -169,9 +175,55 @@ class SimpleEnv:
                                     positionGains=self.position_control_gain_p,
                                     velocityGains=self.position_control_gain_d)
         
+    def resetTargetPositions(self, target_joint_positions):
+        """
+        Reset the target joint positions for the robot.
+        
+        Args:
+            target_joint_positions (list): List of target joint positions.
+        """
+        for i in range(len(self.joint_id)):
+            p.resetJointState(bodyUniqueId=self.robot,
+                              jointIndex=self.joint_id[i],
+                              targetValue=target_joint_positions[i],
+                              targetVelocity=0,
+                              physicsClientId=self.client)
+    
+    def resetBodyPose(self, body_id, target_position, target_orientation):
+        """
+        Reset the position and orientation of the object in the environment.
+        
+        Args:
+            target_position (tuple): Target position (x, y, z).
+            target_orientation (tuple): Target orientation as a quaternion (x, y, z, w).
+        """
+        p.resetBasePositionAndOrientation(body_id, target_position, target_orientation, physicsClientId=self.client)
+        self.object_initial_position = target_position
+        self.object_initial_orientation = target_orientation
+    
+    def getEndEffectorPose(self):
+        """
+        Get the current pose of the end-effector of the robot.
+        The position of ee is lower than the base position by 0.1m on the z-axis.
+        """
+        base_pos, base_orn = p.getBasePositionAndOrientation(self.robot)
+        rot_matrix = np.array(p.getMatrixFromQuaternion(base_orn)).reshape(3, 3)
+        robot_pos = base_pos + rot_matrix[:, 2] * 0.1
+        robot_pose = np.concatenate((np.array(robot_pos), np.array(base_orn)))
+        return robot_pose
+    
     def setEndEffectorPose(self, target_position, target_orientation):
-        target_joint_positions = self.InverseKinematics(target_position, target_orientation)
-        self.setTargetPositions(target_joint_positions)
+        """
+        Set the end-effector pose. The actual ee pose is lower than the base position by 0.1m on the z-axis.
+        Args:
+            target_position (list): Target position (x, y, z).
+            target_orientation (list): Target orientation as a quaternion (x, y, z, w).
+        """
+        # Adjust the target position to be lower by 0.1m on the z-axis
+        base_pos, base_orn = p.getBasePositionAndOrientation(self.robot)
+        rot_matrix = np.array(p.getMatrixFromQuaternion(base_orn)).reshape(3, 3)
+        adjusted_target_position = np.array(target_position) - rot_matrix[:, 2] * 0.1
+        self.resetBodyPose(self.robot, adjusted_target_position, target_orientation)
         
     def setDeltaEndControl(self, delta_position, delta_orientation):
         current_position, current_orientation = self.getEndEffectorPose()
@@ -218,23 +270,77 @@ class SimpleEnv:
         # time.sleep(1 / 1000)
         # p.setJointMotorControl2(self.robot, self.gripper_joints[1], p.POSITION_CONTROL, targetPosition=target_pos)
 
+    def addDebugPoint(self, position, color=(1, 0, 0), size=0.01):
+        radius = 0.01
+        visual_shape_id = p.createVisualShape(p.GEOM_SPHERE, radius=radius, rgbaColor=[color[0], color[1], color[2], 1])
+        p.createMultiBody(baseVisualShapeIndex=visual_shape_id, basePosition=position)
 
-    def getEndEffectorPose(self):
-        link_state = p.getLinkState(self.robot, 7)  # Link 9 corresponds to the end-effector in Panda URDF
-        
-        ee_pos = link_state[4]  # End-effector position
-        ee_ori = link_state[5]  # End-effector orientation in quaternion
-        # Get the base position and orientation of the robot in the world frame
-        base_pos, base_ori = p.getBasePositionAndOrientation(self.robot)
-        
-        # Convert base orientation from quaternion to rotation matrix
-        base_ori_matrix = p.getMatrixFromQuaternion(base_ori)
-        base_ori_matrix = np.array(base_ori_matrix).reshape(3, 3)
-        
-        # Convert the end-effector position to world coordinates
-        ee_pos = np.dot(base_ori_matrix, np.array(ee_pos)) + np.array(base_pos)
-        
-        return ee_pos, ee_ori
+    def getBodyPose(self, body_id):
+        body_ids = [p.getBodyUniqueId(i) for i in range(p.getNumBodies())]
+        pos, orn = p.getBasePositionAndOrientation(body_id)
+        pose = np.concatenate((np.array(pos), np.array(orn)))
+        return pose
+    
+    def attachObjectToRobot(self, object_id):
+        # Get base pose of both bodies
+        parent_pos, parent_orn = p.getBasePositionAndOrientation(self.robot)
+        child_pos, child_orn = p.getBasePositionAndOrientation(object_id)
+
+        # Compute the inverse of parent pose
+        parent_T = p.invertTransform(parent_pos, parent_orn)
+
+        # Compute child's pose relative to parent
+        rel_pos, rel_orn = p.multiplyTransforms(parent_T[0], parent_T[1], child_pos, child_orn)
+
+        # Create fixed constraint using current relative pose
+        cid = p.createConstraint(
+            parentBodyUniqueId=self.robot,
+            parentLinkIndex=-1,
+            childBodyUniqueId=object_id,
+            childLinkIndex=-1,
+            jointType=p.JOINT_FIXED,
+            jointAxis=[0, 0, 0],
+            parentFramePosition=rel_pos,
+            parentFrameOrientation=rel_orn,
+            childFramePosition=[0, 0, 0],
+            childFrameOrientation=[0, 0, 0, 1]
+        )
+        return cid
+    
+    def add_attachment(self, object_id):
+        self.attachments.append(object_id)
+    
+    def remove_attachment(self, object_id):
+        if object_id in self.attachments:
+            self.attachments.remove(object_id)
+        else:
+            print(f"Object {object_id} is not attached to the robot.")
+    
+    def apply_ee_relative_motion_to_object(self, object_id, ee_old_pose,
+                                       ee_new_pose,
+                                       ):
+        ee_old_pos, ee_old_orn = ee_old_pose[:3], ee_old_pose[3:]
+        ee_new_pos, ee_new_orn = ee_new_pose[:3], ee_new_pose[3:]
+        # Step 1: Compute relative transform (EE_old → EE_new)
+        ee_rel_pos, ee_rel_orn = p.multiplyTransforms(
+            ee_new_pos,
+            ee_new_orn,
+            p.invertTransform(ee_old_pos, ee_old_orn)[0],
+            p.invertTransform(ee_old_pos, ee_old_orn)[1],
+        )
+
+        # Step 2: Apply same relative transform to object
+        obj_pos, obj_orn = p.getBasePositionAndOrientation(object_id)
+        new_obj_pos, new_obj_orn = p.multiplyTransforms(
+            obj_pos,
+            obj_orn,
+            ee_rel_pos,
+            ee_rel_orn
+        )
+        # Step 3: Reset object pose
+        self.resetBodyPose(object_id, new_obj_pos, new_obj_orn)
+
+        return new_obj_pos, new_obj_orn
 
     def getJointStates(self):
         joint_states = p.getJointStates(self.robot, self.joint_id)
@@ -336,13 +442,6 @@ class SimpleEnv:
         
         return rgb_img, depth_buffer
 
-
-    def get_observations(self):
-
-        img, depth = self.get_wrist_camera_image()
-
-        return img, depth
-
     def depth_to_world(self, depth_img):
         height, width = depth_img.shape
         width, height = depth_img.shape[1], depth_img.shape[0]
@@ -390,7 +489,7 @@ class SimpleEnv:
         return self.projecion_matrix
 
     def simulate_step(self):
-        for _ in range(500):
+        for _ in range(1):
             p.stepSimulation(physicsClientId=self.client)
             # time.sleep(1 / 1000)
 
@@ -404,7 +503,7 @@ class SimpleEnv:
         self.Videosave_start(video_name="test1")
         mean = 0
         std_dev = 0.1
-        action = self.replay_demo()
+        # action = self.replay_demo()
         # Generate Gaussian noise
         rgb_bn, depth_bn = self.get_wrist_camera_image()
         rgb, depth = self.get_observations()
@@ -428,7 +527,8 @@ class SimpleEnv:
     
     def Videosave_start(self, video_name):
         
-        path = '/home/gentlebear/Mres/DIAYN-PyTorch/media/' + video_name + '.mp4'
+        path = video_name + '.mp4'
+        print(f"Starting video logging to {path}")
         self.log_id = p.startStateLogging(
             p.STATE_LOGGING_VIDEO_MP4, 
             fileName=path, 

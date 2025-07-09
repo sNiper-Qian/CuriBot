@@ -28,7 +28,7 @@ warnings.filterwarnings("ignore")
 #Install this DINO repo to extract correspondences: https://github.com/ShirAmir/dino-vit-features
 from correspondences import find_correspondences, draw_correspondences
 
-from dinobot.env.cube import CubeEnv
+from dinobot.env.icil import CubeEnv
 
 stepsize = 1 / 500
 robot_origin = CubeEnv()

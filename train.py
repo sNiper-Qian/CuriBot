@@ -3,7 +3,7 @@ import os
 import yaml
 import argparse
 from dinobot.env.base import SimpleEnv
-from dinobot.env.cube import CubeEnv
+from dinobot.env.icil import CubeEnv
 from modules import ActorCritic, ActorCriticRecurrent
 from runners import OnPolicyRunner  # Ensure this class is saved in a file named `on_policy_runner.py`
 

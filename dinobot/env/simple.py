@@ -103,7 +103,7 @@ class SimpleEnv:
         img, depth = self.get_wrist_camera_image()
         
         cv2.imwrite('rgb_bn.png', img)
-        p.setGravity(0, 0, -9.8, physicsClientId=self.client)
+        p.setGravity(0, 0, 0.0, physicsClientId=self.client)
         # initial env
         for _ in range(200):
             self.step()
