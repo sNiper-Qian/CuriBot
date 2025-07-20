@@ -10,9 +10,7 @@ from dinobot.controller.waypoints_sampler import SimpleWaypointSampler, GRASP_CO
 import os
 import pybullet as p
 from data_collection.controller import linear_interpolate_cartesian_pose
-# Redirect stdout and stderr to /dev/null
-# sys.stdout = open(os.devnull, 'w')
-# sys.stderr = open(os.devnull, 'w')
+import random
 
 class ICILEnv(SimpleEnv):
     def __init__(self, render=False, Test_env=False):
@@ -36,66 +34,86 @@ class ICILEnv(SimpleEnv):
                     urdf_files.append(os.path.join(root, file))
         return urdf_files
 
-    def get_observations(self, state_type="state", render=False):
-        if state_type == "image":
-            image, depth = super().get_observations()
-            if render:
-                import matplotlib.pyplot as plt
-                plt.imshow(image)
-                plt.show()
-            features = self.encoder.get_feature(image=image)
-            # print("features: ", features.shape)
-            img_features = features[(..., *([np.newaxis] * self.num_envs))]
-            # print("img_features: ", img_features.shape)
-            img_features = img_features.squeeze(-1)
-            extras = {
-                "observations": {
-                    "critic": img_features,
-                    "rnd_state": img_features
-                }
-            }
-            return img_features, extras
-        elif state_type == "state":
-            joint_state, obj_pos, obj_ori = self.get_state()
-            joint_state = np.array(joint_state)
-            joint_state = joint_state.reshape(-1)
-            obj_pos = np.array(obj_pos)
-            obj_ori = np.array(obj_ori)
-            # obj_state = np.concatenate([obj_pos, obj_ori])
-            # print("joint_state: ", )
-            # print("obj_pos: ", obj_pos)
-            # print(joint_state.shape)
-            joint_state = torch.tensor(joint_state, dtype=torch.float32).to(self.device)
-            obj_state = torch.tensor(obj_pos, dtype=torch.float32).to(self.device)
+    def get_wrist_camera_image(self, width=224, height=224):
+        wrist_pose = self.getEndEffectorPose()
+        ee_pos = wrist_pose[:3]
+        ee_ori = wrist_pose[3:]
+        # Get end-effector position and orientation (wrist camera)
+        # # link_state = p.getLinkState(self.robot, 7)  # Link 9 corresponds to the end-effector in Panda URDF
+        # ee_pos = link_state[4]  # End-effector position
+        # ee_ori = link_state[5]  # End-effector orientation in quaternion
+        # print("End orientation (quaternion): ", ee_ori)
+        # Convert quaternion to Euler angles for the camera orientation
+        # ee_ori_euler = p.getEulerFromQuaternion(ee_ori)
+        # print("End orientation (Euler): ", ee_ori_euler)
+        rotation_angle_deg = 90  # Rotate the camera by 90 degrees
+        angle_rad = np.deg2rad(rotation_angle_deg)
+        rot_matrix_90 = np.array([
+            [np.cos(angle_rad), -np.sin(angle_rad), 0],
+            [np.sin(angle_rad),  np.cos(angle_rad), 0],
+            [0,                 0,                 1]
+        ])
+        
+        
+        offset = np.array([0.05, 0.05, 0.05])
+        # Set up the camera parameters
+        camera_eye = ee_pos + offset  # Camera position (at the wrist)
+        # Adjust the camera target to look slightly forward from the end-effector
+        # By default, look down the Z-axis of the end-effector
+        forward_vector = np.array([0, 0, 1])
+        rotation_matrix = np.array(p.getMatrixFromQuaternion(ee_ori)).reshape(3, 3)
+        rotation_matrix = rot_matrix_90.dot(rotation_matrix)
+        offset_target = np.array([0.1, 0, 0])
+        # camera_target = ee_pos + np.array([0, 0, -1]) # Camera target (default: look down the Z-axis of the end-effector)
+        camera_target = camera_eye + rotation_matrix.dot(forward_vector) + offset_target
+        # print("Camera target: ", camera_target)
+        # The "up" vector for the camera (usually aligned with the world z-axis)
+        camera_up_vector = rotation_matrix.dot([0, 1, 0])
+        # camera_up_vector = [0, 1, 0]
 
-            #Policy State
-            # state = torch.cat([joint_state, obj_state], dim=0)
-            state = joint_state
-            state = state[(tuple([np.newaxis] * self.num_envs) +  (...,))]
+        # Compute view matrix
+        # print(f"Camera eye: {camera_eye}, Camera target: {camera_target}, Camera up: {camera_up_vector}")
+        view_matrix = p.computeViewMatrix(camera_eye, camera_target, camera_up_vector)
 
-            # RND State
-            ee_pos, ee_ori = self.getEndEffectorPose()
-            ee_pos = np.array(ee_pos)
-            distance = np.linalg.norm(ee_pos - obj_pos)
-            rnd_distance = min(distance, 0.3)
-            rnd_distance_tensor = torch.tensor([rnd_distance], dtype=torch.float32).to(self.device)
-            rnd_state = torch.cat([obj_state, rnd_distance_tensor], dim=0)
-            rnd_state = rnd_state[(tuple([np.newaxis] * self.num_envs) +  (...,))]
+        # print(f"Camera eye: {camera_eye}, Camera target: {camera_target}, Camera up: {camera_up_vector}")
+        self.camera_extrinsics = view_matrix
+        # Set projection parameters
+        near = 0.1  # Near clipping plane
+        far = 1.0  # Far clipping plane
+        fov = 60  # Field of view
+        projection_matrix = p.computeProjectionMatrixFOV(
+            fov=60,         # Field of view
+            aspect=1.0,     # Aspect ratio
+            nearVal=0.01,    # Near clipping plane
+            farVal=2.0,     # Far clipping plane
+        )
+        self.projecion_matrix = projection_matrix
+        width, height = 224, 224  # Image resolution
 
-            ee_pos = torch.tensor(ee_pos, dtype=torch.float32).to(self.device)
-            MI_state = torch.cat([ee_pos, obj_state], dim=0)
-            # print("MI_state: ", MI_state.shape)
-            # rnd_state = torch.tensor(rnd_distance, dtype=torch.float32)
-            # print("rnd_state: ", type(rnd_state), rnd_state)
-            extras = {
-                "observations": {
-                    "critic": state,
-                    "rnd_state": rnd_state,
-                },
-                "object_state": MI_state,
-            }
-            return state, extras
-    
+        # fov_rad = np.radians(fov)
+        # f_x = (width / 2) / np.tan(fov_rad / 2)
+        # f_y = (height / 2) / np.tan(fov_rad / 2)
+        # c_x = width / 2 
+        # c_y = height / 2
+        # intrinsic_matrix = np.array([
+        #     [f_x, 0, c_x],
+        #     [0, f_y, c_y],
+        #     [0,  0,  1]
+        # ])
+        # self.camera_intrinsics = intrinsic_matrix
+        
+        img = p.getCameraImage(
+            width=width,
+            height=height,
+            viewMatrix=view_matrix,
+            projectionMatrix=projection_matrix,
+            renderer=p.ER_TINY_RENDERER  # You can use p.ER_BULLET_HARDWARE_OPENGL for better rendering
+        )
+        rgb = np.reshape(img[2], (height, width, 4))[:, :, :3].astype(np.uint8)
+        depth = np.reshape(img[3], (height, width)).astype(np.float32)
+        segmentation = np.reshape(img[4], (height, width)).astype(np.uint8)
+        return rgb, depth, segmentation
+
     def quaternion_distance(self, q1, q2):
         """Computes the geodesic distance between two quaternions."""
         q1 = R.from_quat(q1)
@@ -154,7 +172,55 @@ class ICILEnv(SimpleEnv):
         abs_ori = obj_ori
         return np.concatenate([abs_pos, abs_ori])
     
-    def reset(self, obj_indices=None, waypoints=None):
+    def sample_object_positions(self):
+        """
+        Sample two distinct positions for the objects in the environment.
+        The positions are sampled from a grid defined by the bounds and cube size.
+        """
+        # 1) grid bounds and cube size
+        x_min, x_max = -0.4, 0.4
+        y_min, y_max = -0.4, 0.4
+        z_min, z_max =  0.3, 0.6
+        cube_size = 0.1
+
+        # 2) how many cubes along each axis
+        nx = int((x_max - x_min) / cube_size)   # 8
+        ny = int((y_max - y_min) / cube_size)   # 8
+        nz = int((z_max - z_min) / cube_size)   # 3
+
+        # 3) list of all cube‐indices
+        all_cubes = [(i, j, k)
+                    for i in range(nx)
+                    for j in range(ny)
+                    for k in range(nz)]
+
+        # 4) pick the first cube at random
+        cube_idx1 = random.choice(all_cubes)
+
+        # 5) filter out any cube whose Chebyshev distance to cube_idx1 is ≤1
+        valid_cubes = [
+            idx for idx in all_cubes
+            if max(abs(idx[0] - cube_idx1[0]),
+                abs(idx[1] - cube_idx1[1]),
+                abs(idx[2] - cube_idx1[2])) > 1
+        ]
+
+        # 6) sample the second cube from the remaining “non‐neighbors”
+        cube_idx2 = random.choice(valid_cubes)
+
+        # helper to get cube center from its (i,j,k)
+        def cube_center(idx):
+            i, j, k = idx
+            x = x_min + (i + 0.5) * cube_size
+            y = y_min + (j + 0.5) * cube_size
+            z = z_min + (k + 0.5) * cube_size
+            return np.array([x, y, z])
+
+        pos1 = cube_center(cube_idx1)
+        pos2 = cube_center(cube_idx2)
+        return pos1, pos2
+
+    def reset(self, obj_indices=None, waypoints=None, obj_one_init_pos=None, obj_two_init_pos=None, robot_init_pos=None):
         if self.object_ids != []:
             # Print all object ids
             body_ids = [p.getBodyUniqueId(i) for i in range(p.getNumBodies())]
@@ -172,7 +238,7 @@ class ICILEnv(SimpleEnv):
             self.selected_obj_indices = np.array(selected_indices)
         else:
             self.selected_obj_indices = obj_indices
-        selected_objects_paths = [self.objects_paths[i] for i in self.selected_obj_indices]
+        selected_objects_paths = [self.objects_paths[int(i)] for i in self.selected_obj_indices]
 
         # Load object urdfs
         for obj_path in selected_objects_paths:
@@ -180,38 +246,57 @@ class ICILEnv(SimpleEnv):
             self.object_ids.append(obj_id)
 
         # Randomize the object position and orientation
+        pos_one, pos_two = self.sample_object_positions()
+
         for obj_id in self.object_ids[:1]:
-            xy = np.random.uniform(-0.4, 0.4, size=2)
-            # xy = np.array([0.4, 0.4])
-            z = np.random.uniform(0.3, 0.6)
-            # z = 0.6
-            position = np.array([xy[0], xy[1], z])
+            if obj_one_init_pos is not None:
+                position = np.array(obj_one_init_pos)
+            else:
+                # xy = np.random.uniform(-0.4, 0.4, size=2)
+                # # xy = np.array([0.4, 0.4])
+                # z = np.random.uniform(0.3, 0.6)
+                # # z = 0.6
+                # position = np.array([xy[0], xy[1], z])
+                position = np.array(pos_one)
+
             # angle = np.random.uniform(0, 2 * np.pi)
             angle = 0
             quat = p.getQuaternionFromEuler([0, angle, 0])
             self.resetBodyPose(obj_id, position, quat)
+            self.obj_one_init_pos = position
         
         for obj_id in self.object_ids[1:]:
-            xy = np.random.uniform(-0.4, 0.4, size=2)
-            # xy=np.array([-0.4, -0.4])
-            z = np.random.uniform(0.3, 0.6)
-            # z = 0.3
-            position = np.array([xy[0], xy[1], z])
+            if obj_two_init_pos is not None:
+                position = np.array(obj_two_init_pos)
+            else:
+                # xy = np.random.uniform(-0.4, 0.4, size=2)
+                # # xy=np.array([-0.4, -0.4])
+                # z = np.random.uniform(0.3, 0.6)
+                # # z = 0.3
+                # position = np.array([xy[0], xy[1], z])
+                position = np.array(pos_two)
+
             # angle = np.random.uniform(0, 2 * np.pi)
             angle = 0
             quat = p.getQuaternionFromEuler([0, angle, 0])
             self.resetBodyPose(obj_id, position, quat)
+            self.obj_two_init_pos = position
 
         # Randomize the robot position and orientation
-        xy = np.random.uniform(-0.4, 0.4, size=2)
-        # xy = np.array([0.4, 0.4])
-        z = np.random.uniform(0.6, 0.8)
-        # z = 1.0
-        position = np.array([xy[0], xy[1], z])
+        if robot_init_pos is not None:
+            position = np.array(robot_init_pos)
+        else:
+            # xy = np.random.uniform(-0.4, 0.4, size=2)
+            xy = np.array([0., 0.])
+            # z = np.random.uniform(0.6, 0.8)
+            z = 0.8
+            position = np.array([xy[0], xy[1], z])
         # angle = np.random.uniform(0, 2 * np.pi)
         angle = 3.14  # random angle
         quat = p.getQuaternionFromAxisAngle([1, 0, 0], angle)
         self.setEndEffectorPose(position, quat)
+        self.robot_init_pos = position
+        self.set_gripper_open()
 
         self.simulate_step()
 
@@ -279,8 +364,11 @@ class ICILEnv(SimpleEnv):
             combined_mask = robot_mask + object_mask
             rgb[combined_mask == 0] = [0, 255, 0]  # Set background to black
             images[camera_mode] = rgb
+        rgb, depth, segmentation = self.get_wrist_camera_image()
+        images["wrist"] = rgb
         # Get the state
         state = self.getEndEffectorPose()
+        state = np.concatenate([state, np.array([self.current_gripper_state])])
         return images, state
     
     def get_info(self):
@@ -288,9 +376,25 @@ class ICILEnv(SimpleEnv):
         info["selected_obj_indices"] = self.selected_obj_indices
         info["rel_waypoints"] = self.rel_waypoints
         info["abs_waypoints"] = self.abs_waypoints
+        info["obj_one_init_pos"] = self.obj_one_init_pos
+        info["obj_two_init_pos"] = self.obj_two_init_pos
+        info["robot_init_pos"] = self.robot_init_pos
         return info
 
-    def step(self, action):
+    def find_nearest_object(self):
+        distance = float("inf")
+        ee_pos = self.getEndEffectorPose()
+        ee_pos = np.array(ee_pos)
+        for obj_id in self.object_ids: 
+            obj_pos = self.getBodyPose(obj_id)
+            obj_pos = np.array(obj_pos)
+            dist = np.linalg.norm(ee_pos - obj_pos)
+            if dist < distance:
+                distance = dist
+                nearest_object_id = obj_id
+        return nearest_object_id
+
+    def step(self, action, free_attachment=False):
         position = action[:3]
         quat = action[3:-1]
         gripper = action[-1]
@@ -305,14 +409,38 @@ class ICILEnv(SimpleEnv):
         new_robot_pose = self.getBodyPose(self.robot)
         for attachment in self.attachments:
             self.apply_ee_relative_motion_to_object(attachment, current_robot_pose, new_robot_pose)
-        if gripper == 1:
+        if gripper == 1 and self.current_gripper_state == 0:
             self.set_gripper_open()
-        else:
+            # Detach the nearest object
+            if free_attachment:
+                for attachment in self.attachments:
+                    self.remove_attachment(attachment)
+        elif gripper == 0 and self.current_gripper_state == 1:
             self.set_gripper_close()
+            # Attach the nearest object
+            if free_attachment:
+                nearest_object_id = self.find_nearest_object()
+                self.add_attachment(nearest_object_id)
         self.simulate_step()
         images, state = self.get_obs()
         return images, state
     
+    def check_termination(self):
+        """
+        Check if the episode should be terminated.
+        Returns:
+            bool: True if the episode should be terminated, False otherwise.
+        """
+        obj_one_pos = self.getBodyPose(self.object_ids[0])
+        obj_one_pos = np.array(obj_one_pos[:3])
+        obj_two_pos = self.getBodyPose(self.object_ids[1])
+        obj_two_pos = np.array(obj_two_pos[:3])
+        ee_pos = self.getEndEffectorPose()
+        ee_pos = np.array(ee_pos[:3])
+        distance_1 = np.linalg.norm(ee_pos - obj_two_pos)
+        distance_2 = np.linalg.norm(ee_pos - obj_one_pos)
+        return distance_1 < 0.1 and distance_2 < 0.1
+
     def get_move_toward_action(self):
         joint_state, obj_pos, obj_ori = self.get_state()
         joint_state = np.array(joint_state)
@@ -408,7 +536,50 @@ class ICILEnv(SimpleEnv):
         segmentation = np.reshape(img[4], (height, width)).astype(np.uint8)
         return rgb, depth, segmentation
     
-    def approach_pose(self, env, desired_pose, max_step = 0.1):
+    def get_relative_action(self, action, current_pose):
+        """
+        Convert the action to a relative action based on the current pose.
+        """
+        position = action[:3]
+        quat = action[3:-1]
+        gripper = action[-1]
+
+        # Get the current end effector pose
+        current_position = current_pose[:3]
+        current_quat = current_pose[3:]
+
+        # Compute the relative position and orientation
+        rel_position = position - current_position
+        current_rot = R.from_quat(current_quat)
+        target_rot  = R.from_quat(quat)
+        rel_quat    = (target_rot * current_rot.inv()).as_quat()
+
+        return np.concatenate([rel_position, rel_quat, [gripper]])
+
+    def apply_relative_action(self, action, current_pose):
+        """
+        Apply the relative action to the current pose.
+        """
+        # unpack
+        rel_position = action[:3]
+        rel_quat     = action[3:-1]
+        gripper      = action[-1]
+
+        current_position = current_pose[:3]
+        current_quat     = current_pose[3:]
+
+        # position update
+        new_position = current_position + rel_position
+
+        # orientation update
+        curr_rot = R.from_quat(current_quat)
+        rel_rot  = R.from_quat(rel_quat)
+        new_rot  = curr_rot * rel_rot
+        new_quat = new_rot.as_quat()
+
+        return np.concatenate([new_position, new_quat, [gripper]])
+
+    def approach_pose(self, env, desired_pose, max_step = 0.2):
         """
         Generate a sequence of waypoints to approach a desired pose.
         """
@@ -421,21 +592,29 @@ class ICILEnv(SimpleEnv):
         images_xz = []
         images_yz = []
         images_xy = []
+        images_wrist = []
         robot_states = []
-        for i, wp in enumerate(waypoints):
+        for i, wp in enumerate(waypoints[1:]):
             # Collect observations, actions, and images
             imgs, state = self.get_obs()
             action = wp
             gripper_action = self.current_gripper_state
-            action = np.concatenate([action, [gripper_action]])
-            actions.append(action)
-            robot_states.append(state)
+            abs_action = np.concatenate([action, [gripper_action]])
+            current_pose = self.getEndEffectorPose()
+            # Convert the action to a relative action based on the current pose
+            rel_action = self.get_relative_action(abs_action, current_pose)
+            # actions.append(rel_action)
+            actions.append(np.concatenate([rel_action[:3], [rel_action[-1]]]))
+            # robot_states.append(state)
+            # robot_states.append(np.concatenate([state[:3], [state[-1]]])) 
+            robot_states.append(np.concatenate([state[:3], [state[-1]], self.obj_one_init_pos, self.obj_two_init_pos])) 
             images_xz.append(imgs["xz"])
             images_yz.append(imgs["yz"])
             images_xy.append(imgs["xy"])
+            images_wrist.append(imgs["wrist"])
 
             # Step the environment
-            self.step(action)
+            self.step(abs_action)
 
             # # visualize two camera images from the off-screen cameras
             # import matplotlib.pyplot as plt
@@ -450,7 +629,7 @@ class ICILEnv(SimpleEnv):
             # plt.title("XY View")
             # plt.pause(0.01)
 
-        return actions, images_xz, images_yz, images_xy, robot_states
+        return actions, images_xz, images_yz, images_xy, images_wrist, robot_states
     
     def release(self, object_id):
         """
@@ -461,22 +640,29 @@ class ICILEnv(SimpleEnv):
         images_xz = []
         images_yz = []
         images_xy = []
+        images_wrist = []
         robot_states = []
         images, state = self.get_obs()
         current_pose = self.getEndEffectorPose()
-        action = np.concatenate([current_pose[:3], current_pose[3:], [1.0]])
-        actions.append(action)
-        robot_states.append(state)
+        abs_action = np.concatenate([current_pose[:3], current_pose[3:], [1.0]])
+        # Convert the action to a relative action based on the current pose
+        rel_action = self.get_relative_action(abs_action, current_pose)
+        # actions.append(rel_action)
+        actions.append(np.concatenate([rel_action[:3], [rel_action[-1]]]))
+        # robot_states.append(state)
+        # robot_states.append(np.concatenate([state[:3], [state[-1]]])) 
+        robot_states.append(np.concatenate([state[:3], [state[-1]], self.obj_one_init_pos, self.obj_two_init_pos])) 
         images_xz.append(images["xz"])
         images_yz.append(images["yz"])
         images_xy.append(images["xy"])
+        images_wrist.append(images["wrist"])
 
         # Step the environment
-        self.step(action)
+        self.step(abs_action)
 
         # Remove the attachment
         self.remove_attachment(object_id)
-        return actions, images_xz, images_yz, images_xy, robot_states
+        return actions, images_xz, images_yz, images_xy, images_wrist, robot_states
     
     def grasp(self, object_id):
         """
@@ -487,22 +673,36 @@ class ICILEnv(SimpleEnv):
         images_xz = []
         images_yz = []
         images_xy = []
+        images_wrist = []
         robot_states = []
         images, state = self.get_obs()
         current_pose = self.getEndEffectorPose()
-        action = np.concatenate([current_pose[:3], current_pose[3:], [0.0]])
-        actions.append(action)
-        robot_states.append(state)
+        abs_action = np.concatenate([current_pose[:3], current_pose[3:], [0.0]])
+        # Convert the action to a relative action based on the current pose
+        rel_action = self.get_relative_action(abs_action, current_pose)
+        # actions.append(rel_action)
+        actions.append(np.concatenate([rel_action[:3], [rel_action[-1]]]))
+        # robot_states.append(state)
+        # robot_states.append(np.concatenate([state[:3], [state[-1]]])) 
+        robot_states.append(np.concatenate([state[:3], [state[-1]], self.obj_one_init_pos, self.obj_two_init_pos])) 
         images_xz.append(images["xz"])
         images_yz.append(images["yz"])
         images_xy.append(images["xy"])
+        images_wrist.append(images["wrist"])
 
         # Step the environment
-        self.step(action)
+        self.step(abs_action)
 
         # Add the attachment
         self.add_attachment(object_id)
-        return actions, images_xz, images_yz, images_xy, robot_states
+        return actions, images_xz, images_yz, images_xy, images_wrist, robot_states
+
+    def close(self):
+        """
+        Close the environment.
+        """
+        self.disconnect()
+        print("Environment closed.")
     
 if __name__ == "__main__":        
     env = ICILEnv(render=True, Test_env=True)

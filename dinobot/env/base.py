@@ -96,6 +96,8 @@ class SimpleEnv:
             position (tuple): Initial position of the object (x, y, z).
             orientation (tuple): Initial orientation as a quaternion (x, y, z, w).
         """
+        if "TennisBall" in urdf_path or "MediumClamp" in urdf_path or "Strawberry" in urdf_path or "Pear" in urdf_path or "GelatinBox" in urdf_path:
+            globalScale *= 2.0
         print(f"Loading URDF object from {urdf_path} at position {position} with orientation {orientation} and global scale {globalScale}")
         object_id = p.loadURDF(urdf_path, basePosition=position, baseOrientation=orientation, globalScaling=globalScale)
         self.objects.append(object_id)
@@ -375,8 +377,7 @@ class SimpleEnv:
             [0,                 0,                 1]
         ])
         
-        
-        offset = np.array([0.05, 0, 0.05])
+        offset = np.array([0.05, 0.05, 0.05])
         # Set up the camera parameters
         camera_eye = ee_pos + offset  # Camera position (at the wrist)
         # Adjust the camera target to look slightly forward from the end-effector
