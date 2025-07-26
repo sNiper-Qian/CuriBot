@@ -245,6 +245,8 @@ class ICILEnv(SimpleEnv):
         for obj_path in selected_objects_paths:
             obj_id = self.load_urdf_object(obj_path)
             self.object_ids.append(obj_id)
+        
+        p.changeVisualShape(self.object_ids[1], linkIndex=-1, rgbaColor=[1, 1, 1, 0])
 
         # Randomize the object position and orientation
         pos_one, pos_two = self.sample_object_positions()

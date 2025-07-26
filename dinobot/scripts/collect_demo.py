@@ -63,7 +63,6 @@ while True:
             for wp in env.abs_waypoints:
                 object_id = int(wp[0])
                 goal_pose = wp[1:]
-                print(goal_pose)
                 if np.array_equal(goal_pose, GRASP_CODE):
                     # Grasp the object
                     actions, images_xz, images_yz, images_xy, images_wrist, robot_states = env.grasp(object_id)
@@ -83,7 +82,7 @@ while True:
                 imgs_xy_all.extend(images_xy)
                 imgs_wrist_all.extend(images_wrist)
                 robot_states_all.extend(robot_states)
-            raise
+                    
             data = {
                     "images_xz": np.array(imgs_xz_all),   
                     "images_yz": np.array(imgs_yz_all),
