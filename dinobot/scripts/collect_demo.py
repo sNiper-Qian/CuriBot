@@ -9,7 +9,7 @@ dataset_dir = "../dataset_3d"
 if not os.path.exists(dataset_dir):
     os.makedirs(dataset_dir)
 
-env = ICILEnv(render=False, Test_env=True)
+env = ICILEnv(render=True, Test_env=True)
 # Get the recorded data from the pickle file
 env.set_visualizer_camera()
 # Add off-screen cameras
@@ -36,14 +36,16 @@ while True:
         datas = []
         obj_indices = None
         rel_waypoints = None
+        num_objects = None
         success = True
         for traj in range(num_trajectories):
-            if obj_indices is None and rel_waypoints is None:
+            if obj_indices is None and rel_waypoints is None and num_objects is None:
                 _, _, info = env.reset()
                 obj_indices = info["selected_obj_indices"]
                 rel_waypoints = info["rel_waypoints"]
+                num_objects = info["num_objects"]
             else:
-                _, _, info = env.reset(obj_indices=obj_indices, waypoints=rel_waypoints)
+                _, _, info = env.reset(obj_indices=obj_indices, waypoints=rel_waypoints, num_objects=num_objects)
             obj_one_init_pos = info["obj_one_init_pos"]
             obj_two_init_pos = info["obj_two_init_pos"]
             robot_init_pos = info["robot_init_pos"]
@@ -92,6 +94,7 @@ while True:
                     "actions": np.array(actions_all),
                     "object_indices": np.array(obj_indices),
                     "rel_waypoints": np.array(rel_waypoints),
+                    "num_objects": num_objects,
                     "obj_one_init_pos": np.array(obj_one_init_pos),
                     "obj_two_init_pos": np.array(obj_two_init_pos),
                     "robot_init_pos": np.array(robot_init_pos),
@@ -128,6 +131,7 @@ while True:
                     traj_group.create_dataset("actions", data=data["actions"])
                     traj_group.create_dataset("object_indices", data=data["object_indices"])
                     traj_group.create_dataset("rel_waypoints", data=data["rel_waypoints"])
+                    traj_group.create_dataset("num_objects", data=data["num_objects"])
                     traj_group.create_dataset("obj_one_init_pos", data=data["obj_one_init_pos"])
                     traj_group.create_dataset("obj_two_init_pos", data=data["obj_two_init_pos"])
                     traj_group.create_dataset("robot_init_pos", data=data["robot_init_pos"])

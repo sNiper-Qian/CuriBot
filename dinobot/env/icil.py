@@ -6,7 +6,7 @@ from dinobot.env.base import SimpleEnv
 # from modules.vision import DinoV2Encoder
 from scipy.spatial.transform import Rotation as R
 import sys
-from dinobot.controller.waypoints_sampler import PickAndPlaceWaypointSampler, PushTaskWaypointSampler, GRASP_CODE, RELEASE_CODE
+from dinobot.controller.waypoints_sampler import VersatileWaypointSampler, GRASP_CODE, RELEASE_CODE
 import os
 import pybullet as p
 from data_collection.controller import linear_interpolate_cartesian_pose
@@ -18,7 +18,7 @@ class ICILEnv(SimpleEnv):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.objects_paths = self.get_objects_paths("assets/pybullet_object_models/ycb_objects")
         self.cameras = {}
-        self.waypoints_sampler = PushTaskWaypointSampler()
+        self.waypoints_sampler = VersatileWaypointSampler()
         self.object_ids = []
         print("Objects Paths: ", self.objects_paths)
     
@@ -53,7 +53,6 @@ class ICILEnv(SimpleEnv):
             [np.sin(angle_rad),  np.cos(angle_rad), 0],
             [0,                 0,                 1]
         ])
-        
         
         offset = np.array([0.05, 0.05, 0.05])
         # Set up the camera parameters
@@ -220,7 +219,7 @@ class ICILEnv(SimpleEnv):
         pos2 = cube_center(cube_idx2)
         return pos1, pos2
 
-    def reset(self, obj_indices=None, waypoints=None, obj_one_init_pos=None, obj_two_init_pos=None, robot_init_pos=None):
+    def reset(self, obj_indices=None, waypoints=None, obj_one_init_pos=None, obj_two_init_pos=None, robot_init_pos=None, num_objects=None):
         # Remove all attachments
         for attachment in self.attachments:
             self.remove_attachment(attachment)
@@ -246,8 +245,6 @@ class ICILEnv(SimpleEnv):
             obj_id = self.load_urdf_object(obj_path)
             self.object_ids.append(obj_id)
         
-        p.changeVisualShape(self.object_ids[1], linkIndex=-1, rgbaColor=[1, 1, 1, 0])
-
         # Randomize the object position and orientation
         pos_one, pos_two = self.sample_object_positions()
 
@@ -303,11 +300,17 @@ class ICILEnv(SimpleEnv):
 
         self.simulate_step()
 
-        if waypoints is None:
+        if waypoints is None and num_objects is None:
             # Randomly sample waypoints in object frame
-            self.rel_waypoints = self.waypoints_sampler.sample_waypoints(self.object_ids)
-        else:
+            self.rel_waypoints, self.num_objects = self.waypoints_sampler.sample_waypoints(object_ids=self.object_ids)
+        elif waypoints is not None and num_objects is not None:
             self.rel_waypoints = waypoints
+            self.num_objects = num_objects
+        else:
+            raise ValueError("Either waypoints or num_objects should be None, but not both.")
+    
+        if self.num_objects == 1:
+            p.changeVisualShape(self.object_ids[1], linkIndex=-1, rgbaColor=[1, 1, 1, 0])
 
         # Compute waypoints in world frame
         abs_waypoints = []
@@ -386,6 +389,7 @@ class ICILEnv(SimpleEnv):
         info["obj_one_init_pos"] = self.obj_one_init_pos
         info["obj_two_init_pos"] = self.obj_two_init_pos
         info["robot_init_pos"] = self.robot_init_pos
+        info["num_objects"] = self.num_objects
         return info
 
     def find_nearest_object(self):
