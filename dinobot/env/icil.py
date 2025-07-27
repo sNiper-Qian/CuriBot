@@ -215,8 +215,8 @@ class ICILEnv(SimpleEnv):
             z = z_min + (k + 0.5) * cube_size
             return np.array([x, y, z])
 
-        pos1 = cube_center(cube_idx1)
-        pos2 = cube_center(cube_idx2)
+        pos1 = cube_center(cube_idx1) + np.random.uniform(-0.05, 0.05, size=3)
+        pos2 = cube_center(cube_idx2) + np.random.uniform(-0.05, 0.05, size=3)
         return pos1, pos2
 
     def reset(self, obj_indices=None, waypoints=None, obj_one_init_pos=None, obj_two_init_pos=None, robot_init_pos=None, num_objects=None):
@@ -259,8 +259,8 @@ class ICILEnv(SimpleEnv):
                 # position = np.array([xy[0], xy[1], z])
                 position = np.array(pos_one)
 
-            # angle = np.random.uniform(0, 2 * np.pi)
-            angle = 0
+            angle = np.random.uniform(0, 2 * np.pi)
+            # angle = 0
             quat = p.getQuaternionFromEuler([0, angle, 0])
             self.resetBodyPose(obj_id, position, quat)
             self.obj_one_init_pos = position
@@ -276,8 +276,8 @@ class ICILEnv(SimpleEnv):
                 # position = np.array([xy[0], xy[1], z])
                 position = np.array(pos_two)
 
-            # angle = np.random.uniform(0, 2 * np.pi)
-            angle = 0
+            angle = np.random.uniform(0, 2 * np.pi)
+            # angle = 0
             quat = p.getQuaternionFromEuler([0, angle, 0])
             self.resetBodyPose(obj_id, position, quat)
             self.obj_two_init_pos = position

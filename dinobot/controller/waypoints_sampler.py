@@ -4,6 +4,39 @@ GRASP_CODE = np.ones(7)
 RELEASE_CODE = np.zeros(7)
 TASK_TYPES = ['pick_and_place', 'move_to_target', 'push', 'pull', 'pick']
 
+def euler_to_quaternion(yaw, pitch, roll):
+    """
+    Convert Z-Y-X Euler angles (yaw, pitch, roll) into quaternion (x, y, z, w).
+    Angles are in radians.
+    """
+    cy = np.cos(yaw * 0.5)
+    sy = np.sin(yaw * 0.5)
+    cp = np.cos(pitch * 0.5)
+    sp = np.sin(pitch * 0.5)
+    cr = np.cos(roll * 0.5)
+    sr = np.sin(roll * 0.5)
+
+    w = cr * cp * cy + sr * sp * sy
+    x = cr * cp * sy - sr * sp * cy
+    y = cr * sp * cy + sr * cp * sy
+    z = sr * cp * cy - cr * sp * sy
+
+    # return as (x, y, z, w)
+    return np.array([x, y, z, w])
+
+def random_euler_upper_hemisphere():
+    """
+    Returns a tuple (yaw, pitch, roll) in radians,
+    sampled so that the 'body' z-axis lies uniformly on the upper hemisphere.
+    Convention: rotations applied in order Z (yaw), then Y (pitch), then X (roll).
+    """
+    # Uniform in [0,1] for cos(theta)
+    u = np.random.rand()
+    theta = np.arccos(u)           # pitch in [0, π/2]
+    psi   = np.random.rand() * 2*np.pi   # yaw in [0, 2π)
+    phi   = np.random.rand() * 2*np.pi   # roll in [0, 2π)
+    return psi, theta, phi
+
 def sample_pose_on_sphere(distance=0.01, phi_range=(0, np.pi/2)):
     """
     Sample a random pose on a sphere.
@@ -15,9 +48,8 @@ def sample_pose_on_sphere(distance=0.01, phi_range=(0, np.pi/2)):
     y = distance * np.sin(phi) * np.sin(theta)
     z = distance * np.cos(phi)
 
-    # Orientation is currently always (1, 0, 0, 0)
-    # TODO
-    quat = [1, 0, 0, 0]
+    euler = random_euler_upper_hemisphere()
+    quat = euler_to_quaternion(*euler)
 
     # # Draw the xyz
     # point = [x, y, z]

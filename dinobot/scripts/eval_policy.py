@@ -83,7 +83,7 @@ def main(dataset_config: DatasetConfig,
         model.load_state_dict(torch.load(ckpt_path, map_location="cuda"))
     # model.float()
     model.to(shared_config.device)
-    eval_dataset = OnDiskInfiniteDataset(dataset_config=dataset_config, shared_config=shared_config, split="train")
+    eval_dataset = OnDiskInfiniteDataset(dataset_config=dataset_config, shared_config=shared_config, split="eval")
     eval_loader = torch.utils.data.DataLoader(eval_dataset, batch_size=1, shuffle=True, num_workers=1)
     temporal_ensembler = ACTTemporalEnsembler(0.01, shared_config.n_pred_steps)
 
@@ -121,6 +121,7 @@ def main(dataset_config: DatasetConfig,
         with torch.no_grad():
             obj_indices = data["object_indices"][0].cpu().numpy()
             rel_waypoints = data["rel_waypoints"][0].cpu().numpy()
+            num_objects = data["num_objects"][0].cpu().numpy()
             obj_one_init_pos = data["obj_one_init_pos"][0].cpu().numpy()
             obj_two_init_pos = data["obj_two_init_pos"][0].cpu().numpy()
             robot_init_pos = data["robot_init_pos"][0].cpu().numpy()
@@ -137,7 +138,7 @@ def main(dataset_config: DatasetConfig,
             env.add_camera("xy")
             env.reset()
             imgs, state, info = env.reset(obj_indices=obj_indices, waypoints=rel_waypoints, obj_one_init_pos=obj_one_init_pos,
-                                          obj_two_init_pos=obj_two_init_pos, robot_init_pos=robot_init_pos)
+                                          obj_two_init_pos=obj_two_init_pos, robot_init_pos=robot_init_pos, num_objects=num_objects,)
             
             # disable robot dynamics
             env.disable_robot_dynamics()
@@ -175,7 +176,7 @@ def main(dataset_config: DatasetConfig,
            
             with autocast(device_type="cuda"):
                 # use tqdm
-                for i in tqdm(range(30)):
+                for i in tqdm(range(50)):
                     data = move_to_device(data, shared_config.device)
                     pred_action_seq = model.inference(data)
                     # print("loss:", loss.item())
@@ -250,13 +251,13 @@ if __name__ == "__main__":
                                    load_to_memory=True,
                                    max_n_prompts=1,
                                 #    action_scale=[0.2, 0.2, 0.2, 1],
-                                   action_min=[-0.2, -0.2, -0.2, 0.],
-                                   action_max=[0.2, 0.2, 0.1, 1],
+                                   action_min=[-0.05, -0.05, -0.05, 0.],
+                                   action_max=[0.05, 0.05, 0.05, 1],
                                    auxiliary_scale=10,
                                 #    obs_scale=[0.4, 0.4, 0.8, 1],
-                                   obs_min=[-0.45, -0.45, 0.35, 0.],
-                                   obs_max=[0.45, 0.45, 0.8, 1.],
-                                   label_keys=["rel_waypoints", "object_indices", 
+                                   obs_min=[-0.6, -0.6, 0.275, 0.,],
+                                   obs_max=[0.6, 0.6, 0.8, 1.,],
+                                   label_keys=["rel_waypoints", "object_indices", "num_objects",
                                                "obj_one_init_pos", "obj_two_init_pos", 
                                                "robot_init_pos",],
                                    enable_debug=True,
@@ -276,9 +277,9 @@ if __name__ == "__main__":
                                 obs_dim=4,
                                 action_dim=4,
                                 )
-    shared_config = SharedConfig(batch_size=1, prompt_length=15, n_hist_steps=1, single_step_observation=False,
+    shared_config = SharedConfig(batch_size=1, prompt_length=40, n_hist_steps=1, single_step_observation=False,
                                  image_keys=["images_xy", "images_xz", "images_yz"], num_traj_per_task=2, action_key="actions", 
-                                 task_length=15, n_pred_steps=4, sampling_interval=1, n_samples_per_task=1, 
+                                 task_length=40, n_pred_steps=4, sampling_interval=3, n_samples_per_task=1, 
                                  obs_keys=["robot_states"], bg_key="",
                                  )
     act_config = ACTConfig(use_film=False, 
@@ -304,4 +305,4 @@ if __name__ == "__main__":
                            use_adaLN=False,
                            )
     trainer_config = TrainerConfig(ckpt_dir="/root/icil/ckpts/icil", lr=1e-4, epochs=5000, num_workers=1)
-    main(dataset_config, model_config, shared_config, act_config, ckpt_path="../ckpts/icil/2025-07-22_09-28-24/model_138000.pth")
+    main(dataset_config, model_config, shared_config, act_config, ckpt_path="../ckpts/icil/2025-07-26_22-46-56/model_54000.pth")

@@ -9,7 +9,7 @@ dataset_dir = "../dataset_3d"
 if not os.path.exists(dataset_dir):
     os.makedirs(dataset_dir)
 
-env = ICILEnv(render=True, Test_env=True)
+env = ICILEnv(render=False, Test_env=True)
 # Get the recorded data from the pickle file
 env.set_visualizer_camera()
 # Add off-screen cameras
