@@ -168,7 +168,7 @@ class ICILEnv(SimpleEnv):
         rel_ori = rel_pose[3:]
         
         abs_pos = obj_pos + rel_pos
-        abs_ori = obj_ori
+        abs_ori = (R.from_quat(obj_ori) * R.from_quat(rel_ori)).as_quat()
         return np.concatenate([abs_pos, abs_ori])
     
     def sample_object_positions(self):
@@ -259,9 +259,9 @@ class ICILEnv(SimpleEnv):
                 # position = np.array([xy[0], xy[1], z])
                 position = np.array(pos_one)
 
-            angle = np.random.uniform(0, 2 * np.pi)
-            # angle = 0
-            quat = p.getQuaternionFromEuler([0, angle, 0])
+            # angle = np.random.uniform(0, np.pi)
+            angle = 0
+            quat = p.getQuaternionFromEuler([0, 0, angle])
             self.resetBodyPose(obj_id, position, quat)
             self.obj_one_init_pos = position
         
@@ -276,9 +276,9 @@ class ICILEnv(SimpleEnv):
                 # position = np.array([xy[0], xy[1], z])
                 position = np.array(pos_two)
 
-            angle = np.random.uniform(0, 2 * np.pi)
-            # angle = 0
-            quat = p.getQuaternionFromEuler([0, angle, 0])
+            # angle = np.random.uniform(0, np.pi)
+            angle = 0
+            quat = p.getQuaternionFromEuler([0, 0, angle])
             self.resetBodyPose(obj_id, position, quat)
             self.obj_two_init_pos = position
 
@@ -294,6 +294,8 @@ class ICILEnv(SimpleEnv):
         # angle = np.random.uniform(0, 2 * np.pi)
         angle = 3.14  # random angle
         quat = p.getQuaternionFromAxisAngle([1, 0, 0], angle)
+        # euler = p.getEulerFromQuaternion(quat)
+        # print("Robot euler:", euler)
         self.setEndEffectorPose(position, quat)
         self.robot_init_pos = position
         self.set_gripper_open()
@@ -310,6 +312,7 @@ class ICILEnv(SimpleEnv):
             raise ValueError("Either waypoints or num_objects should be None, but not both.")
     
         if self.num_objects == 1:
+            p.changeVisualShape(self.object_ids[0], linkIndex=-1, rgbaColor=[1, 1, 1, 1])
             p.changeVisualShape(self.object_ids[1], linkIndex=-1, rgbaColor=[1, 1, 1, 0])
 
         # Compute waypoints in world frame
@@ -585,7 +588,7 @@ class ICILEnv(SimpleEnv):
         # orientation update
         curr_rot = R.from_quat(current_quat)
         rel_rot  = R.from_quat(rel_quat)
-        new_rot  = curr_rot * rel_rot
+        new_rot  = rel_rot * curr_rot
         new_quat = new_rot.as_quat()
 
         return np.concatenate([new_position, new_quat, [gripper]])
@@ -595,7 +598,9 @@ class ICILEnv(SimpleEnv):
         Generate a sequence of waypoints to approach a desired pose.
         """
         current_pose = self.getEndEffectorPose()
-        desired_pose[3:] = current_pose[3:]  # Keep the current orientation
+        # current_euler = p.getEulerFromQuaternion(current_pose[3:])
+        # print("Current pose: ", current_euler)
+        # desired_pose[3:] = current_pose[3:]  # Keep the current orientation
         waypoints = linear_interpolate_cartesian_pose(
             current_pose, desired_pose, max_step=max_step
         )
@@ -614,11 +619,12 @@ class ICILEnv(SimpleEnv):
             current_pose = self.getEndEffectorPose()
             # Convert the action to a relative action based on the current pose
             rel_action = self.get_relative_action(abs_action, current_pose)
+            # abs_action = self.apply_relative_action(rel_action, current_pose)
             # actions.append(rel_action)
-            actions.append(np.concatenate([rel_action[:3], [rel_action[-1]]]))
+            actions.append(np.concatenate([rel_action[:7], [rel_action[-1]]]))
             # robot_states.append(state)
             # robot_states.append(np.concatenate([state[:3], [state[-1]]])) 
-            robot_states.append(np.concatenate([state[:3], [state[-1]]])) 
+            robot_states.append(np.concatenate([state[:7], [state[-1]]])) 
             images_xz.append(imgs["xz"])
             images_yz.append(imgs["yz"])
             images_xy.append(imgs["xy"])
@@ -659,10 +665,10 @@ class ICILEnv(SimpleEnv):
         # Convert the action to a relative action based on the current pose
         rel_action = self.get_relative_action(abs_action, current_pose)
         # actions.append(rel_action)
-        actions.append(np.concatenate([rel_action[:3], [rel_action[-1]]]))
+        actions.append(np.concatenate([rel_action[:7], [rel_action[-1]]]))
         # robot_states.append(state)
         # robot_states.append(np.concatenate([state[:3], [state[-1]]])) 
-        robot_states.append(np.concatenate([state[:3], [state[-1]]])) 
+        robot_states.append(np.concatenate([state[:7], [state[-1]]])) 
         images_xz.append(images["xz"])
         images_yz.append(images["yz"])
         images_xy.append(images["xy"])
@@ -692,10 +698,10 @@ class ICILEnv(SimpleEnv):
         # Convert the action to a relative action based on the current pose
         rel_action = self.get_relative_action(abs_action, current_pose)
         # actions.append(rel_action)
-        actions.append(np.concatenate([rel_action[:3], [rel_action[-1]]]))
+        actions.append(np.concatenate([rel_action[:7], [rel_action[-1]]]))
         # robot_states.append(state)
         # robot_states.append(np.concatenate([state[:3], [state[-1]]])) 
-        robot_states.append(np.concatenate([state[:3], [state[-1]]])) 
+        robot_states.append(np.concatenate([state[:7], [state[-1]]])) 
         images_xz.append(images["xz"])
         images_yz.append(images["yz"])
         images_xy.append(images["xy"])

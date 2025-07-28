@@ -1,20 +1,21 @@
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 
 GRASP_CODE = np.ones(7)
 RELEASE_CODE = np.zeros(7)
 TASK_TYPES = ['pick_and_place', 'move_to_target', 'push', 'pull', 'pick']
 
-def euler_to_quaternion(yaw, pitch, roll):
+def euler_to_quaternion(x, y, z):
     """
-    Convert Z-Y-X Euler angles (yaw, pitch, roll) into quaternion (x, y, z, w).
+    Convert X-Y-Z Euler angles into quaternion (x, y, z, w).
     Angles are in radians.
     """
-    cy = np.cos(yaw * 0.5)
-    sy = np.sin(yaw * 0.5)
-    cp = np.cos(pitch * 0.5)
-    sp = np.sin(pitch * 0.5)
-    cr = np.cos(roll * 0.5)
-    sr = np.sin(roll * 0.5)
+    cy = np.cos(z * 0.5)
+    sy = np.sin(z * 0.5)
+    cp = np.cos(y * 0.5)
+    sp = np.sin(y * 0.5)
+    cr = np.cos(x * 0.5)
+    sr = np.sin(x * 0.5)
 
     w = cr * cp * cy + sr * sp * sy
     x = cr * cp * sy - sr * sp * cy
@@ -24,18 +25,11 @@ def euler_to_quaternion(yaw, pitch, roll):
     # return as (x, y, z, w)
     return np.array([x, y, z, w])
 
-def random_euler_upper_hemisphere():
-    """
-    Returns a tuple (yaw, pitch, roll) in radians,
-    sampled so that the 'body' z-axis lies uniformly on the upper hemisphere.
-    Convention: rotations applied in order Z (yaw), then Y (pitch), then X (roll).
-    """
-    # Uniform in [0,1] for cos(theta)
-    u = np.random.rand()
-    theta = np.arccos(u)           # pitch in [0, π/2]
-    psi   = np.random.rand() * 2*np.pi   # yaw in [0, 2π)
-    phi   = np.random.rand() * 2*np.pi   # roll in [0, 2π)
-    return psi, theta, phi
+def sample_euler_upper_hemisphere(x_range=(np.pi/6*5, np.pi/6*7), y_range=(0, np.pi/2)):
+    x = np.random.uniform(*x_range)
+    y = np.random.uniform(-np.pi/4, np.pi/4)
+    z = np.random.uniform(-np.pi/4, np.pi/4)
+    return [x, y, z]
 
 def sample_pose_on_sphere(distance=0.01, phi_range=(0, np.pi/2)):
     """
@@ -48,8 +42,9 @@ def sample_pose_on_sphere(distance=0.01, phi_range=(0, np.pi/2)):
     y = distance * np.sin(phi) * np.sin(theta)
     z = distance * np.cos(phi)
 
-    euler = random_euler_upper_hemisphere()
-    quat = euler_to_quaternion(*euler)
+    euler = sample_euler_upper_hemisphere()
+    # print(f"Sampled euler angles: {euler}")
+    quat = R.from_euler('xyz', euler, degrees=False).as_quat()
 
     # # Draw the xyz
     # point = [x, y, z]
@@ -107,19 +102,21 @@ class PickAndPlaceWaypointSampler:
         rel_waypoints = []
         first_obj_id, second_obj_id = 0, 1
         # Pre-grasp pose
-        sampled_pose = sample_pose_on_sphere(distance=0.2, phi_range=(0, 0.3))
-        rel_waypoints.append(np.concatenate([np.array(first_obj_id).reshape(-1,), np.array(sampled_pose)]))
+        pre_grasp_pose = sample_pose_on_sphere(distance=0.2, phi_range=(0, 0.3))
+        rel_waypoints.append(np.concatenate([np.array(first_obj_id).reshape(-1,), np.array(pre_grasp_pose)]))
         # Approach first object
-        sampled_pose = sample_pose_on_sphere(distance=0.1)
-        rel_waypoints.append(np.concatenate([np.array(first_obj_id).reshape(-1,), np.array(sampled_pose)]))
+        grasp_pose = sample_pose_on_sphere(distance=0.1)
+        grasp_pose[3:] = pre_grasp_pose[3:]  # Keep the orientation from pre-grasp
+        rel_waypoints.append(np.concatenate([np.array(first_obj_id).reshape(-1,), np.array(grasp_pose)]))
         # Grasp first object
         rel_waypoints.append(np.concatenate([np.array(first_obj_id).reshape(-1,), GRASP_CODE]))
         # Pre-place pose
-        sampled_pose = sample_pose_on_sphere(distance=0.2, phi_range=(0, 0.3))
-        rel_waypoints.append(np.concatenate([np.array(second_obj_id).reshape(-1,), np.array(sampled_pose)]))
+        pre_place_pose = sample_pose_on_sphere(distance=0.2, phi_range=(0, 0.3))
+        rel_waypoints.append(np.concatenate([np.array(second_obj_id).reshape(-1,), np.array(pre_place_pose)]))
         # Approach second object
-        sampled_pose = sample_pose_on_sphere(distance=0.1)
-        rel_waypoints.append(np.concatenate([np.array(second_obj_id).reshape(-1,), np.array(sampled_pose)]))
+        place_pose = sample_pose_on_sphere(distance=0.1)
+        place_pose[3:] = pre_place_pose[3:]
+        rel_waypoints.append(np.concatenate([np.array(second_obj_id).reshape(-1,), np.array(place_pose)]))
         # Release first object
         rel_waypoints.append(np.concatenate([np.array(first_obj_id).reshape(-1,), RELEASE_CODE]))
         rel_waypoints = np.stack(rel_waypoints)
@@ -186,11 +183,11 @@ class PushWaypointSampler:
 
         # Pre-push: stand-off before contact
         pre_push = 0.2 * rel_direction.copy()
-        pre_push = np.concatenate([pre_push, np.array([1, 0, 0, 0])])  # Keep orientation as (1, 0, 0, 0)
+        pre_push = np.concatenate([pre_push, sampled_contact_point[3:]])  # Keep orientation as (1, 0, 0, 0)
 
         # Post-push: endpoint after sliding the object along the push direction
         post_push = -0.3 * rel_direction.copy()
-        post_push = np.concatenate([post_push, np.array([1, 0, 0, 0])])
+        post_push = np.concatenate([post_push, sampled_contact_point[3:]])  # Keep orientation as (1, 0, 0, 0)])
 
         # Assemble and return waypoints
         rel_waypoints = []
@@ -230,7 +227,7 @@ class PullWaypointSampler:
 
         # Pre-push: stand-off before contact
         post_pull = 0.3 * rel_direction.copy()
-        post_pull = np.concatenate([post_pull, np.array([1, 0, 0, 0])])  # Keep orientation as (1, 0, 0, 0)
+        post_pull = np.concatenate([post_pull, sampled_contact_point[3:]])  # Keep orientation as (1, 0, 0, 0)
 
         # Assemble and return waypoints
         rel_waypoints = []
@@ -247,15 +244,17 @@ class PickWaypointSampler:
         rel_waypoints = []
         first_obj_id = 0
         # Pre-grasp pose
-        sampled_pose = sample_pose_on_sphere(distance=0.2, phi_range=(0, 0.3))
-        rel_waypoints.append(np.concatenate([np.array(first_obj_id).reshape(-1,), np.array(sampled_pose)]))
+        pre_grasp_pose = sample_pose_on_sphere(distance=0.2, phi_range=(0, 0.3))
+        rel_waypoints.append(np.concatenate([np.array(first_obj_id).reshape(-1,), np.array(pre_grasp_pose)]))
         # Approach first object
-        sampled_pose = sample_pose_on_sphere(distance=0.1)
-        rel_waypoints.append(np.concatenate([np.array(first_obj_id).reshape(-1,), np.array(sampled_pose)]))
+        grasp_pose = sample_pose_on_sphere(distance=0.1)
+        grasp_pose[3:] = pre_grasp_pose[3:]  # Keep the orientation from pre-grasp
+        rel_waypoints.append(np.concatenate([np.array(first_obj_id).reshape(-1,), np.array(grasp_pose)]))
         # Grasp first object
         rel_waypoints.append(np.concatenate([np.array(first_obj_id).reshape(-1,), GRASP_CODE]))
         # Post-grasp pose
-        sampled_pose = sample_pose_on_sphere(distance=0.2, phi_range=(0, 0.3))
-        rel_waypoints.append(np.concatenate([np.array(first_obj_id).reshape(-1,), np.array(sampled_pose)]))
+        post_grasp_pose = sample_pose_on_sphere(distance=0.2, phi_range=(0, 0.3))
+        post_grasp_pose[3:] = grasp_pose[3:]
+        rel_waypoints.append(np.concatenate([np.array(first_obj_id).reshape(-1,), np.array(post_grasp_pose)]))
         rel_waypoints = np.stack(rel_waypoints)
         return rel_waypoints

@@ -9,7 +9,7 @@ dataset_dir = "../dataset_3d"
 if not os.path.exists(dataset_dir):
     os.makedirs(dataset_dir)
 
-env = ICILEnv(render=False, Test_env=True)
+env = ICILEnv(render=True, Test_env=True)
 # Get the recorded data from the pickle file
 env.set_visualizer_camera()
 # Add off-screen cameras
@@ -23,10 +23,10 @@ success_cnt = 0
 rounds = 0
 max_length = 0
 
-global_min_action = np.array([np.inf, np.inf, np.inf, np.inf])
-global_max_action = np.array([-np.inf, -np.inf, -np.inf, -np.inf])
-global_min_robot_state = np.array([np.inf]*4)
-global_max_robot_state = np.array([-np.inf]*4)
+global_min_action = np.array([np.inf]*8)
+global_max_action = np.array([-np.inf]*8)
+global_min_robot_state = np.array([np.inf]*8)
+global_max_robot_state = np.array([-np.inf]*8)
 
 while True:
     rounds += 1
@@ -119,27 +119,27 @@ while True:
             if length > max_length:
                 max_length = length
             print(f"Max length: {max_length}")
-        while True:
-            with h5py.File(f"{dataset_dir}/episode.h5.tmp", "w") as f: # Temporary file to avoid overwriting
-                for i, data in enumerate(datas):
-                    traj_group = f.create_group(f"trajectory_{i}")
-                    traj_group.create_dataset("images_xz", data=data["images_xz"])
-                    traj_group.create_dataset("images_yz", data=data["images_yz"])
-                    traj_group.create_dataset("images_xy", data=data["images_xy"])
-                    traj_group.create_dataset("images_wrist", data=data["images_wrist"])
-                    traj_group.create_dataset("robot_states", data=data["robot_states"])
-                    traj_group.create_dataset("actions", data=data["actions"])
-                    traj_group.create_dataset("object_indices", data=data["object_indices"])
-                    traj_group.create_dataset("rel_waypoints", data=data["rel_waypoints"])
-                    traj_group.create_dataset("num_objects", data=data["num_objects"])
-                    traj_group.create_dataset("obj_one_init_pos", data=data["obj_one_init_pos"])
-                    traj_group.create_dataset("obj_two_init_pos", data=data["obj_two_init_pos"])
-                    traj_group.create_dataset("robot_init_pos", data=data["robot_init_pos"])
-                    print(f"Saved Episode {success_cnt}, Trajectory {i}")
-            # Replace the temporary file with the final file
-            os.replace(f"{dataset_dir}/episode.h5.tmp", f"{dataset_dir}/episode_{success_cnt}.h5")
-            success_cnt += 1
-            if success_cnt > num_episodes:
-                success_cnt = 0
-            break
+        # while True:
+        #     with h5py.File(f"{dataset_dir}/episode.h5.tmp", "w") as f: # Temporary file to avoid overwriting
+        #         for i, data in enumerate(datas):
+        #             traj_group = f.create_group(f"trajectory_{i}")
+        #             traj_group.create_dataset("images_xz", data=data["images_xz"])
+        #             traj_group.create_dataset("images_yz", data=data["images_yz"])
+        #             traj_group.create_dataset("images_xy", data=data["images_xy"])
+        #             traj_group.create_dataset("images_wrist", data=data["images_wrist"])
+        #             traj_group.create_dataset("robot_states", data=data["robot_states"])
+        #             traj_group.create_dataset("actions", data=data["actions"])
+        #             traj_group.create_dataset("object_indices", data=data["object_indices"])
+        #             traj_group.create_dataset("rel_waypoints", data=data["rel_waypoints"])
+        #             traj_group.create_dataset("num_objects", data=data["num_objects"])
+        #             traj_group.create_dataset("obj_one_init_pos", data=data["obj_one_init_pos"])
+        #             traj_group.create_dataset("obj_two_init_pos", data=data["obj_two_init_pos"])
+        #             traj_group.create_dataset("robot_init_pos", data=data["robot_init_pos"])
+        #             print(f"Saved Episode {success_cnt}, Trajectory {i}")
+        #     # Replace the temporary file with the final file
+        #     os.replace(f"{dataset_dir}/episode.h5.tmp", f"{dataset_dir}/episode_{success_cnt}.h5")
+        #     success_cnt += 1
+        #     if success_cnt > num_episodes:
+        #         success_cnt = 0
+        #     break
 print("done")
