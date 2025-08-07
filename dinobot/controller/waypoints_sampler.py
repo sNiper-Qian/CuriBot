@@ -2,7 +2,7 @@ import numpy as np
 
 GRASP_CODE = np.ones(7)
 RELEASE_CODE = np.zeros(7)
-TASK_TYPES = ['pick_and_place', 'move_to_target', 'push', 'pull', 'pick']
+TASK_TYPES = ['pick_and_place', 'pick_and_place', 'move_to_target', 'move_to_target', 'push', 'pull', 'pick']
 
 def euler_to_quaternion(yaw, pitch, roll):
     """

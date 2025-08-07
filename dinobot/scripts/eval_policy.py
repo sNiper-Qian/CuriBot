@@ -253,7 +253,9 @@ if __name__ == "__main__":
                                 #    action_scale=[0.2, 0.2, 0.2, 1],
                                    action_min=[-0.05, -0.05, -0.05, 0.],
                                    action_max=[0.05, 0.05, 0.05, 1],
-                                   auxiliary_scale=10,
+                                #    auxiliary_scale=10,
+                                   auxiliary_min=[-0.6, -0.6, 0.275],
+                                   auxiliary_max=[0.6, 0.6, 0.8],
                                 #    obs_scale=[0.4, 0.4, 0.8, 1],
                                    obs_min=[-0.6, -0.6, 0.275, 0.,],
                                    obs_max=[0.6, 0.6, 0.8, 1.,],
@@ -295,6 +297,7 @@ if __name__ == "__main__":
                            pre_norm=True,
                            use_spatial_temporal_encoder=False,
                            use_flow_as_auxiliary=False,
+                           use_detection_as_auxiliary=True,
                            input_shapes= { 
                                             "observation.images.top": [3, 224, 224] ,
                                             "observation.state": [4],
@@ -305,4 +308,4 @@ if __name__ == "__main__":
                            use_adaLN=False,
                            )
     trainer_config = TrainerConfig(ckpt_dir="/root/icil/ckpts/icil", lr=1e-4, epochs=5000, num_workers=1)
-    main(dataset_config, model_config, shared_config, act_config, ckpt_path="../ckpts/icil/2025-07-26_22-46-56/model_54000.pth")
+    main(dataset_config, model_config, shared_config, act_config, ckpt_path="../ckpts/icil/2025-08-06_21-14-37/model_51000.pth")

@@ -3,6 +3,8 @@ from dinobot.controller.waypoints_sampler import GRASP_CODE, RELEASE_CODE
 import numpy as np
 import h5py
 import os
+os.environ["PYOPENGL_PLATFORM"] = "egl"
+os.environ["EGL_DEVICE_ID"] = "0"
 
 dataset_dir = "../dataset_3d"
 # Create the dataset directory if it doesn't exist

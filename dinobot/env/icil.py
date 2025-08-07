@@ -8,6 +8,8 @@ from scipy.spatial.transform import Rotation as R
 import sys
 from dinobot.controller.waypoints_sampler import VersatileWaypointSampler, GRASP_CODE, RELEASE_CODE
 import os
+os.environ["PYOPENGL_PLATFORM"] = "egl"
+os.environ["EGL_DEVICE_ID"]        = "0"
 import pybullet as p
 from data_collection.controller import linear_interpolate_cartesian_pose
 import random
@@ -16,7 +18,7 @@ class ICILEnv(SimpleEnv):
     def __init__(self, render=False, Test_env=False):
         super().__init__(render, Test_env)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.objects_paths = self.get_objects_paths("assets/pybullet_object_models/ycb_objects")
+        self.objects_paths = self.get_objects_paths("assets/pybullet_object_models/selected_ycb_objects")
         self.cameras = {}
         self.waypoints_sampler = VersatileWaypointSampler()
         self.object_ids = []
@@ -106,7 +108,7 @@ class ICILEnv(SimpleEnv):
             height=height,
             viewMatrix=view_matrix,
             projectionMatrix=projection_matrix,
-            renderer=p.ER_TINY_RENDERER  # You can use p.ER_BULLET_HARDWARE_OPENGL for better rendering
+            renderer=p.ER_BULLET_HARDWARE_OPENGL  # You can use p.ER_BULLET_HARDWARE_OPENGL for better rendering
         )
         rgb = np.reshape(img[2], (height, width, 4))[:, :, :3].astype(np.uint8)
         depth = np.reshape(img[3], (height, width)).astype(np.float32)
@@ -259,8 +261,8 @@ class ICILEnv(SimpleEnv):
                 # position = np.array([xy[0], xy[1], z])
                 position = np.array(pos_one)
 
-            angle = np.random.uniform(0, 2 * np.pi)
-            # angle = 0
+            # angle = np.random.uniform(0, 2 * np.pi)
+            angle = 0
             quat = p.getQuaternionFromEuler([0, angle, 0])
             self.resetBodyPose(obj_id, position, quat)
             self.obj_one_init_pos = position
@@ -276,8 +278,8 @@ class ICILEnv(SimpleEnv):
                 # position = np.array([xy[0], xy[1], z])
                 position = np.array(pos_two)
 
-            angle = np.random.uniform(0, 2 * np.pi)
-            # angle = 0
+            # angle = np.random.uniform(0, 2 * np.pi)
+            angle = 0
             quat = p.getQuaternionFromEuler([0, angle, 0])
             self.resetBodyPose(obj_id, position, quat)
             self.obj_two_init_pos = position
@@ -310,7 +312,9 @@ class ICILEnv(SimpleEnv):
             raise ValueError("Either waypoints or num_objects should be None, but not both.")
     
         if self.num_objects == 1:
-            p.changeVisualShape(self.object_ids[1], linkIndex=-1, rgbaColor=[1, 1, 1, 0])
+            # remove the second object
+            p.removeBody(self.object_ids[1])
+            self.object_ids = self.object_ids[:1]
 
         # Compute waypoints in world frame
         abs_waypoints = []
@@ -442,15 +446,16 @@ class ICILEnv(SimpleEnv):
         Returns:
             bool: True if the episode should be terminated, False otherwise.
         """
-        obj_one_pos = self.getBodyPose(self.object_ids[0])
-        obj_one_pos = np.array(obj_one_pos[:3])
-        obj_two_pos = self.getBodyPose(self.object_ids[1])
-        obj_two_pos = np.array(obj_two_pos[:3])
-        ee_pos = self.getEndEffectorPose()
-        ee_pos = np.array(ee_pos[:3])
-        distance_1 = np.linalg.norm(ee_pos - obj_two_pos)
-        distance_2 = np.linalg.norm(ee_pos - obj_one_pos)
-        return distance_1 < 0.1 and distance_2 < 0.1
+        # obj_one_pos = self.getBodyPose(self.object_ids[0])
+        # obj_one_pos = np.array(obj_one_pos[:3])
+        # obj_two_pos = self.getBodyPose(self.object_ids[1])
+        # obj_two_pos = np.array(obj_two_pos[:3])
+        # ee_pos = self.getEndEffectorPose()
+        # ee_pos = np.array(ee_pos[:3])
+        # distance_1 = np.linalg.norm(ee_pos - obj_two_pos)
+        # distance_2 = np.linalg.norm(ee_pos - obj_one_pos)
+        # return distance_1 < 0.1 and distance_2 < 0.1
+        return False
 
     def get_move_toward_action(self):
         joint_state, obj_pos, obj_ori = self.get_state()
@@ -521,7 +526,7 @@ class ICILEnv(SimpleEnv):
             height=height,
             viewMatrix=view_matrix,
             projectionMatrix=projection_matrix,
-            renderer=p.ER_TINY_RENDERER
+            renderer=p.ER_BULLET_HARDWARE_OPENGL
         )
         rgb = np.reshape(img[2], (height, width, 4))[:, :, :3].astype(np.uint8)
         depth = np.reshape(img[3], (height, width)).astype(np.float32)

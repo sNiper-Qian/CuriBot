@@ -3,7 +3,8 @@ import os
 # Redirect stdout and stderr to /dev/null
 # sys.stdout = open(os.devnull, 'w')
 # sys.stderr = open(os.devnull, 'w')
-
+os.environ["PYOPENGL_PLATFORM"] = "egl"
+os.environ["EGL_DEVICE_ID"]        = "0"
 import pybullet as p
 import numpy as np
 # from dinobot.robot_control import open_gripper, close_gripper
@@ -14,6 +15,7 @@ import math
 import cv2
 # import torch
 import matplotlib.pyplot as plt
+import pkgutil, pybullet_data
 # from torchvision import transforms
 # from PIL import Image
 
@@ -70,15 +72,24 @@ class SimpleEnv:
             self.client = p.connect(p.GUI)
         else:
             self.client = p.connect(p.DIRECT)
-        # import pybullet_data
-        # p.setAdditionalSearchPath(pybullet_data.getDataPath())
+            # 2) make sure data path is set
+            p.setAdditionalSearchPath(pybullet_data.getDataPath())
+            # 3) load the EGL renderer plugin
+            egl = pkgutil.get_loader("eglRenderer")
+            if egl:
+                p.loadPlugin(egl.get_filename(), "_eglRendererPlugin", physicsClientId=self.client)
+            else:
+                # fallback name if pkgutil lookup fails
+                p.loadPlugin("eglRendererPlugin", physicsClientId=self.client)
         plane_id = p.loadURDF("assets/plane/plane.urdf")
         p.setTimeStep(1 / 1000, physicsClientId=self.client)
-        p.setPhysicsEngineParameter(solverResidualThreshold=0, physicsClientId=self.client)
-        p.setPhysicsEngineParameter(numSolverIterations=200)
-
-        p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0, physicsClientId=self.client)
-        p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1, physicsClientId=self.client)
+        # p.setPhysicsEngineParameter(solverResidualThreshold=0, physicsClientId=self.client)
+        # p.setPhysicsEngineParameter(numSolverIterations=200)
+        if self.render:
+            p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1, physicsClientId=self.client)
+        else:
+            p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0, physicsClientId=self.client)
+        # p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1, physicsClientId=self.client)
         self.robot = p.loadURDF(self.robot_urdf, useFixedBase=True, physicsClientId=self.client)
         # disable shadows
         p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 0)
