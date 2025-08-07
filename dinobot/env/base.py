@@ -345,10 +345,10 @@ class SimpleEnv:
         # Step 2: Apply same relative transform to object
         obj_pos, obj_orn = p.getBasePositionAndOrientation(object_id)
         new_obj_pos, new_obj_orn = p.multiplyTransforms(
+            ee_rel_pos,
+            ee_rel_orn,
             obj_pos,
             obj_orn,
-            ee_rel_pos,
-            ee_rel_orn
         )
         # Step 3: Reset object pose
         self.resetBodyPose(object_id, new_obj_pos, new_obj_orn)

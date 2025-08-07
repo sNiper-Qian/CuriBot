@@ -43,6 +43,9 @@ def linear_interpolate_cartesian_pose(current_pose, desired_pose, max_step):
     # 3. Extract orientations as [x, y, z, w]
     start_ori = np.array(current_pose[3:])
     end_ori   = np.array(desired_pose[3:])
+    # start_euler = R.from_quat(start_ori).as_euler('xyz', degrees=False)
+    # end_euler = R.from_quat(end_ori).as_euler('xyz', degrees=False)
+    # print(f"Start orientation: {start_euler}, End orientation: {end_euler}")
 
     # Normalize just in case
     start_norm = np.linalg.norm(start_ori)
