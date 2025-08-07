@@ -3,3 +3,8 @@ logs/
 point_cloud/
 realsense_image/
 *.mp4
+ShapeNet/
+imgs/
+ShapeNetExtracted/
+textures/
+*.h5

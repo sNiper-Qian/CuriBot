@@ -2,7 +2,7 @@ import numpy as np
 # import transforms3d
 # import trimesh
 # import torch
-from dinobot.env.base import SimpleEnv
+from dinobot.env.icil import ICILEnv
 # from modules.vision import DinoV2Encoder
 from scipy.spatial.transform import Rotation as R
 import sys
@@ -11,28 +11,119 @@ import os
 import pybullet as p
 from data_collection.controller import linear_interpolate_cartesian_pose
 import random
+import trimesh
+from trimesh.transformations import rotation_matrix
+from scipy.spatial import cKDTree
 
-class ICILEnv(SimpleEnv):
+class RLBenchEnv(ICILEnv):
     def __init__(self, render=False, Test_env=False):
         super().__init__(render, Test_env)
         # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.objects_paths = self.get_objects_paths("assets/pybullet_object_models/ycb_objects")
+        # self.objects_paths = self.get_objects_paths("assets/pybullet_object_models/ycb_objects")
+        self.objects_paths, self.with_texture = self.get_objects_paths("ShapeNetExtracted")
+        self.texture_paths = self.get_texture_paths("textures")
         self.cameras = {}
         self.waypoints_sampler = VersatileWaypointSampler()
         self.object_ids = []
         # print("Objects Paths: ", self.objects_paths)
     
+    def get_texture_paths(self, texture_path):
+        """
+        # Find all texture files in the given directory and its subdirectories.
+        """
+        texture_files = []
+        for root, dirs, files in os.walk(texture_path):
+            for file in files:
+                if file.endswith('.png') or file.endswith('.jpg'):
+                    texture_files.append(os.path.join(root, file))
+        return texture_files
+
     def get_objects_paths(self, objects_path):
         """
         # Find all .urdf files in the objects directory and its subdirectories.
         """
+        with_texture = {}
         urdf_files = []
         for root, dirs, files in os.walk(objects_path):
             for file in files:
-                if file.endswith('.urdf'):
+                if file.endswith('.obj'):
                     # Construct the full path to the URDF file and add it to the list.
                     urdf_files.append(os.path.join(root, file))
-        return urdf_files
+                    # Check if the file has a texture (whether it has an images folder in the upper directory)
+                    if os.path.exists(os.path.join("/".join(str(root).split(os.sep)[:-1]), 'images')):
+                        with_texture[os.path.join(root, file)] = True
+                    else:
+                        with_texture[os.path.join(root, file)] = False
+        return urdf_files, with_texture
+    
+    def compute_scale_from_obj(self, obj_filename, max_size=1.0):
+        """
+        Compute a uniform scale factor so that the largest dimension
+        of the OBJ mesh does not exceed `max_size`.
+        """
+        verts = []
+        with open(obj_filename, 'r') as f:
+            for line in f:
+                if line.startswith('v '):
+                    # Parse the XYZ coordinates of each vertex
+                    _, x, y, z = line.split()
+                    verts.append([float(x), float(y), float(z)])
+        verts = np.array(verts)
+        min_v = verts.min(axis=0)
+        max_v = verts.max(axis=0)
+        dims = max_v - min_v
+        max_dim = dims.max()
+        if max_dim == 0:
+            return 1.0
+        return max_size / max_dim
+
+    def load_obj_object(self, obj_path, position=(0, 0, 0), orientation=(0, 0, 0, 1), globalScale=0.3, scale=None, texture_index=None):
+        """
+        Load an OBJ model and add it to the environment.
+        
+        Args:
+            obj_path (str): Path to the OBJ file.
+            position (tuple): Initial position of the object (x, y, z).
+            orientation (tuple): Initial orientation as a quaternion (x, y, z, w).
+        """
+        # print(f"Loading OBJ object from {obj_path} at position {position} with orientation {orientation} and global scale {globalScale}")
+        max_scale = self.compute_scale_from_obj(obj_path, max_size=globalScale)
+        if scale is None:
+            scale = np.random.uniform(0.6, 1.0) * max_scale
+
+        # 4) Create a collision shape from the mesh
+        col_shape = p.createCollisionShape(
+            shapeType=p.GEOM_MESH,
+            fileName=obj_path,
+            meshScale=[scale, scale, scale],               # adjust if your obj is too big / small
+            flags=p.GEOM_FORCE_CONCAVE_TRIMESH # allows concave meshes (only use for static objects)
+        )
+        
+        # 5) Create a matching visual shape
+        vis_shape = p.createVisualShape(
+            shapeType=p.GEOM_MESH,
+            fileName=obj_path,
+            meshScale=[scale, scale, scale]
+        )
+
+        # 6) Combine into a single multibody
+        object_id = p.createMultiBody(
+            baseMass=0,                        # 0 = static (won’t fall under gravity)
+            baseCollisionShapeIndex=col_shape,
+            baseVisualShapeIndex=vis_shape,
+            basePosition=[0, 0, 0],          # where to place your mesh
+            baseOrientation=[0, 0, 0, 1]       # quaternion (x, y, z, w)
+        )
+        if not self.with_texture[obj_path]:
+            # randomly choose a texture from the texture paths
+            if texture_index is None:
+                texture_index = random.choice([i for i in range(len(self.texture_paths))])
+            texUid = p.loadTexture(self.texture_paths[texture_index])
+            p.changeVisualShape(object_id, -1, textureUniqueId=texUid)
+        else:
+            texture_index = -1
+
+        return object_id, scale, texture_index
 
     def get_wrist_camera_image(self, width=224, height=224):
         wrist_pose = self.getEndEffectorPose()
@@ -106,7 +197,7 @@ class ICILEnv(SimpleEnv):
             height=height,
             viewMatrix=view_matrix,
             projectionMatrix=projection_matrix,
-            renderer=p.ER_TINY_RENDERER  # You can use p.ER_BULLET_HARDWARE_OPENGL for better rendering
+            renderer=p.ER_BULLET_HARDWARE_OPENGL  # You can use p.ER_BULLET_HARDWARE_OPENGL for better rendering
         )
         rgb = np.reshape(img[2], (height, width, 4))[:, :, :3].astype(np.uint8)
         depth = np.reshape(img[3], (height, width)).astype(np.float32)
@@ -158,16 +249,44 @@ class ICILEnv(SimpleEnv):
             "width": 224,
             "height": 224,
         }
+    
+    def add_camera_from_calib(self, calib_config_path, camera_name=None):
+        """
+        Add a camera to the environment from calibration parameters.
+        calib_config_path: Path to the calibration config file (yaml).
+        """
+        import yaml
+        with open(calib_config_path, 'r') as f:
+            calib_config = yaml.safe_load(f)
+            intrinsics = np.array(calib_config["intrinsics"])
+            extrinsics = np.array(calib_config["extrinsics"])
+            near = calib_config["near_plane"]
+            far = calib_config["far_plane"]
+
+        view_matrix, projection_matrix = self.compute_offscreen_camera_param_from_calib(
+            intrinsics, extrinsics, near, far
+        )
+        if camera_name is None:
+            camera_name = calib_config_path.split("/")[-1].split(".")[0]
+        self.cameras[camera_name] = {
+            "view_matrix": view_matrix,
+            "projection_matrix": projection_matrix,
+            "width": 224,
+            "height": 224,
+        }
 
     def apply_rel_pose_on_object(self, object_id, rel_pose):
         obj_pose = self.getBodyPose(self.object_ids[object_id])
         obj_pos = np.array(obj_pose[:3])
         obj_ori = np.array(obj_pose[3:])
+        obj_euler = np.array(p.getEulerFromQuaternion(obj_ori))
+        obj_euler[0] -= np.pi / 2
+        obj_ori = p.getQuaternionFromEuler(obj_euler)
 
         rel_pos = rel_pose[:3]
         rel_ori = rel_pose[3:]
         
-        abs_pos = obj_pos + rel_pos
+        abs_pos = obj_pos + R.from_quat(obj_ori).apply(rel_pos)
         abs_ori = (R.from_quat(obj_ori) * R.from_quat(rel_ori)).as_quat()
         return np.concatenate([abs_pos, abs_ori])
     
@@ -177,9 +296,9 @@ class ICILEnv(SimpleEnv):
         The positions are sampled from a grid defined by the bounds and cube size.
         """
         # 1) grid bounds and cube size
-        x_min, x_max = -0.3, 0.3
+        x_min, x_max = 0.1285, 0.4285
         y_min, y_max = -0.3, 0.3
-        z_min, z_max =  0.3, 0.6
+        z_min, z_max =  0.7, 0.9
         cube_size = 0.1
 
         # 2) how many cubes along each axis
@@ -218,8 +337,44 @@ class ICILEnv(SimpleEnv):
         pos1 = cube_center(cube_idx1) + np.random.uniform(-0.05, 0.05, size=3)
         pos2 = cube_center(cube_idx2) + np.random.uniform(-0.05, 0.05, size=3)
         return pos1, pos2
+    
+    def is_rotational_symmetric(self,
+                                mesh: trimesh.Trimesh,
+                                axis: np.ndarray = np.array([0, 1, 0]),
+                                tol: float = 0.08,
+                                angles: list = None) -> bool:
+        """
+        Check if mesh is invariant under rotations about a given axis.
 
-    def reset(self, obj_indices=None, waypoints=None, obj_one_init_pos=None, obj_two_init_pos=None, robot_init_pos=None, num_objects=None):
+        Args:
+            mesh (trimesh.Trimesh): The mesh to test.
+            axis (np.ndarray): Unit vector direction of rotation axis.
+            tol (float): Maximum allowed distance after rotation.
+            angles (list): List of angles (radians) to test. If None, defaults to [pi, pi/2, pi/3, pi/4].
+
+        Returns:
+            bool: True if symmetric for all angles within tolerance.
+        """
+        if angles is None:
+            angles = [np.pi, np.pi/2, np.pi/3, np.pi/4]
+
+        verts = mesh.vertices.copy() - mesh.centroid
+        tree = cKDTree(verts)
+
+        for theta in angles:
+            R = rotation_matrix(theta, axis[:3])[:3, :3]
+            rotated = (verts @ R.T)
+            dists, _ = tree.query(rotated, k=1)
+            max_dist = dists.max()
+            # print(f"Rotation {theta:.2f} rad -> max distance: {max_dist:.6f}")
+            # print(max_dist, tol)
+            if max_dist > tol:
+                return False
+        print("Mesh is rotationally symmetric.")
+        return True
+        
+
+    def reset(self, obj_indices=None, waypoints=None, obj_one_init_pos=None, obj_two_init_pos=None, robot_init_pos=None, num_objects=None, object_scales=None, object_texture_indices=None):
         # Remove all attachments
         for attachment in self.attachments:
             self.remove_attachment(attachment)
@@ -229,7 +384,9 @@ class ICILEnv(SimpleEnv):
             for obj_id in body_ids[2:]:
                 p.removeBody(obj_id)
 
-            self.object_ids = []
+        self.object_ids = []
+        self.object_scales = []
+        self.object_texture_indices = []
 
         if obj_indices is None:
             # Randomly sample two objects from the objects_paths
@@ -241,10 +398,24 @@ class ICILEnv(SimpleEnv):
         selected_objects_paths = [self.objects_paths[int(i)] for i in self.selected_obj_indices]
 
         # Load object urdfs
-        for obj_path in selected_objects_paths:
-            obj_id = self.load_urdf_object(obj_path)
-            self.object_ids.append(obj_id)
-        
+        is_symmetrics = []
+        if object_scales is None and object_texture_indices is None:
+            for obj_path in selected_objects_paths:
+                # obj_id = self.load_urdf_object(obj_path)
+                obj_id, scale, texture_index = self.load_obj_object(obj_path)
+                self.object_ids.append(obj_id)
+                self.object_scales.append(scale)
+                self.object_texture_indices.append(texture_index)
+                is_symmetrics.append(self.is_rotational_symmetric(trimesh.load(obj_path, force='mesh')))
+        else:
+            for i, obj_path in enumerate(selected_objects_paths):
+                # obj_id = self.load_urdf_object(obj_path)
+                obj_id, scale, texture_index = self.load_obj_object(obj_path, scale=object_scales[i], texture_index=object_texture_indices[i])
+                self.object_ids.append(obj_id)
+                self.object_scales.append(scale)
+                self.object_texture_indices.append(texture_index)
+                is_symmetrics.append(self.is_rotational_symmetric(trimesh.load(obj_path, force='mesh')))
+
         # Randomize the object position and orientation
         pos_one, pos_two = self.sample_object_positions()
 
@@ -253,11 +424,12 @@ class ICILEnv(SimpleEnv):
                 position = np.array(obj_one_init_pos)
             else:
                 position = np.array(pos_one)
-                # position = np.array([0.4, 0.4, 0.3])
-
-            # angle = np.random.uniform(0, np.pi)
-            angle = 0
-            quat = p.getQuaternionFromEuler([0, 0, angle])
+                # position = np.array([0.4285, 0.3, 0.8])
+            if is_symmetrics[0]:
+                angle = 0
+            else:
+                angle = np.random.uniform(0, np.pi/2)
+            quat = p.getQuaternionFromEuler([1.57, 0, angle])
             self.resetBodyPose(obj_id, position, quat)
             self.obj_one_init_pos = position
         
@@ -266,11 +438,12 @@ class ICILEnv(SimpleEnv):
                 position = np.array(obj_two_init_pos)
             else:
                 position = np.array(pos_two)
-                # position = np.array([-0.4, -0.4, 0.3])
-
-            # angle = np.random.uniform(0, np.pi)
-            angle = 0
-            quat = p.getQuaternionFromEuler([0, 0, angle])
+                # position = np.array([-0.0215, -0.3, 0.8])
+            if is_symmetrics[1]:
+                angle = 0
+            else:
+                angle = np.random.uniform(0, np.pi/2)
+            quat = p.getQuaternionFromEuler([1.57, 0, angle])
             self.resetBodyPose(obj_id, position, quat)
             self.obj_two_init_pos = position
 
@@ -279,13 +452,15 @@ class ICILEnv(SimpleEnv):
             position = np.array(robot_init_pos)
         else:
             # xy = np.random.uniform(-0.4, 0.4, size=2)
-            xy = np.array([0., 0.])
+            xy = np.array([0.2785, 0.])
             # z = np.random.uniform(0.6, 0.8)
-            z = 0.8
+            z = 1.271
             position = np.array([xy[0], xy[1], z])
         # angle = np.random.uniform(0, 2 * np.pi)
         angle = 3.14  # random angle
-        quat = p.getQuaternionFromAxisAngle([1, 0, 0], angle)
+        self.setEndEffectorPose(np.array([0, 0, 0.1]), p.getQuaternionFromAxisAngle([3.14, 0, 0], angle))  # Reset the end-effector pose to avoid any previous state
+        self.simulate_step()
+        quat = p.getQuaternionFromAxisAngle([3.14, 0, 0], angle)
         # euler = p.getEulerFromQuaternion(quat)
         # print("Robot euler:", euler)
         self.setEndEffectorPose(position, quat)
@@ -304,8 +479,8 @@ class ICILEnv(SimpleEnv):
             raise ValueError("Either waypoints or num_objects should be None, but not both.")
     
         if self.num_objects == 1:
-            p.changeVisualShape(self.object_ids[0], linkIndex=-1, rgbaColor=[1, 1, 1, 1])
-            p.changeVisualShape(self.object_ids[1], linkIndex=-1, rgbaColor=[1, 1, 1, 0])
+            # remove the second object
+            p.removeBody(self.object_ids[1])
 
         # Compute waypoints in world frame
         abs_waypoints = []
@@ -385,6 +560,8 @@ class ICILEnv(SimpleEnv):
         info["obj_two_init_pos"] = self.obj_two_init_pos
         info["robot_init_pos"] = self.robot_init_pos
         info["num_objects"] = self.num_objects
+        info["object_scales"] = self.object_scales
+        info["object_texture_indices"] = self.object_texture_indices
         return info
 
     def find_nearest_object(self):
@@ -428,6 +605,7 @@ class ICILEnv(SimpleEnv):
                 nearest_object_id = self.find_nearest_object()
                 self.add_attachment(nearest_object_id)
         self.simulate_step()
+
         images, state = self.get_obs()
         return images, state
     
@@ -488,6 +666,92 @@ class ICILEnv(SimpleEnv):
             cameraPitch=camera_pitch,
             cameraTargetPosition=camera_target
         )
+
+    def compute_offscreen_camera_param_from_calib(self, intrinsics, extrinsics, near, far, width=None, height=None):
+        """
+        Create PyBullet view and projection matrices from camera calibration parameters.
+        
+        Args:
+            intrinsics (np.ndarray): 3x3 camera intrinsic matrix K.
+            extrinsics (np.ndarray): 4x4 world-to-camera extrinsic matrix.
+            near (float): Near clipping plane distance.
+            far (float): Far clipping plane distance.
+            width (int, optional): Image width. If None, inferred from cx.
+            height (int, optional): Image height. If None, inferred from cy.
+
+        Returns:
+            view_matrix (list): PyBullet-compatible view matrix.
+            proj_matrix (list): PyBullet-compatible projection matrix.
+        """
+
+        # --- Infer resolution if not given ---
+        fx, fy = -intrinsics[0, 0], -intrinsics[1, 1]
+        cx, cy = intrinsics[0, 2], intrinsics[1, 2]
+        
+        if width is None:
+            width = int(cx * 2)  # assumes principal point ~ center
+        if height is None:
+            height = int(cy * 2)
+
+        view_matrix = extrinsics.astype(np.float32)
+        eye, target, up = self.decompose_c2w(view_matrix, look_along_minus_z=False)
+        # print("Camera eye:", eye, "Target:", target, "Up:", up)
+        # view_matrix = np.linalg.inv(view_matrix)  # Convert to camera-to-world
+        # print(extrinsics)
+        # eye, target, up = self.extract_lookat_from_extrinsics(view_matrix)
+        # print("Camera eye:", eye, "Target:", target, "Up:", up)
+        # view_matrix = view_matrix.T.reshape(16).tolist()
+        view_matrix = p.computeViewMatrix(eye, target, up)
+
+        # --- Intrinsics to OpenGL frustum bounds ---
+        left   = -cx * near / fx
+        right  = (width - cx) * near / fx
+        bottom = -(height - cy) * near / fy
+        top    = cy * near / fy
+
+        proj_matrix = p.computeProjectionMatrix(left, right, bottom, top, near, far)
+
+        return view_matrix, proj_matrix
+    
+    def decompose_c2w(self, E, look_along_minus_z=True):
+        """
+        Given a camera-to-world extrinsic E = [[R, t],[0,1]],
+        returns eye, target, up in world coordinates.
+        """
+        R   = E[:3, :3]
+        t   = E[:3,  3]
+        eye = t.copy()
+
+        # camera axes in world
+        right  = R[:, 0]
+        up     = R[:, 1]
+        z_axis = R[:, 2]
+
+        # choose viewing direction
+        if look_along_minus_z:
+            forward = -z_axis
+        else:
+            forward =  z_axis
+
+        target = eye + forward
+        return eye, target, up
+    
+    def decompose_extrinsic(self, E):
+        """
+        Given a 4×4 extrinsic matrix E = [[R, t],[0,1]],
+        returns eye, target, up in world coordinates.
+        """
+        R = E[:3,:3]
+        t = E[:3,3]
+
+        eye     = -R.T @ t
+        # camera axes in world:
+        forward = R.T @ np.array([0,0,1])   # viewing direction
+        up      = R.T @ np.array([0,1,0])   # "up" direction
+
+        target = eye + forward
+
+        return eye, target, up
     
     def compute_offscreen_camera_param(self, mode="xz"):
         if mode == "xz":
@@ -597,10 +861,7 @@ class ICILEnv(SimpleEnv):
             current_pose, desired_pose, max_step=max_step
         )
         actions = []
-        images_xz = []
-        images_yz = []
-        images_xy = []
-        images_wrist = []
+        all_images = {}
         robot_states = []
         for i, wp in enumerate(waypoints[1:]):
             # Collect observations, actions, and images
@@ -611,45 +872,46 @@ class ICILEnv(SimpleEnv):
             current_pose = self.getEndEffectorPose()
             # Convert the action to a relative action based on the current pose
             rel_action = self.get_relative_action(abs_action, current_pose)
-            # abs_action = self.apply_relative_action(rel_action, current_pose)
+            abs_action = self.apply_relative_action(rel_action, current_pose)
             # actions.append(rel_action)
             actions.append(np.concatenate([rel_action[:7], [rel_action[-1]]]))
             # robot_states.append(state)
             # robot_states.append(np.concatenate([state[:3], [state[-1]]])) 
             robot_states.append(np.concatenate([state[:7], [state[-1]]])) 
-            images_xz.append(imgs["xz"])
-            images_yz.append(imgs["yz"])
-            images_xy.append(imgs["xy"])
-            images_wrist.append(imgs["wrist"])
+            for key, value in imgs.items():
+                if key not in all_images:
+                    all_images[key] = []
+                all_images[key].append(value)
 
+            # # save the overhead camera image
+            # import cv2
+            # front_camera = imgs["front_camera"]
+            # side_image = imgs["side_camera"]
+            # cv2.imwrite(f"imgs/front_image_{i}.png", front_camera)
+            # cv2.imwrite(f"imgs/side_image_{i}.png", side_image)
+            # raise
             # Step the environment
             self.step(abs_action)
 
             # # visualize two camera images from the off-screen cameras
             # import matplotlib.pyplot as plt
-            # plt.subplot(1, 3, 1)
-            # plt.imshow(imgs["xz"])
-            # plt.title("XZ View")
-            # plt.subplot(1, 3, 2)
-            # plt.imshow(imgs["yz"])
-            # plt.title("YZ View")
-            # plt.subplot(1, 3, 3)
-            # plt.imshow(imgs["xy"])
-            # plt.title("XY View")
+            # plt.subplot(1, 2, 1)
+            # plt.imshow(imgs["side_camera"])
+            # plt.title("Side View")
+            # plt.subplot(1, 2, 2)
+            # plt.imshow(imgs["front_camera"])
+            # plt.title("Front View")
             # plt.pause(0.01)
 
-        return actions, images_xz, images_yz, images_xy, images_wrist, robot_states
-    
+        return actions, all_images, robot_states
+
     def release(self, object_id):
         """
         Release the object. Open the gripper and remove the attachment.
         """
         # Collect observations, actions, and images
         actions = []
-        images_xz = []
-        images_yz = []
-        images_xy = []
-        images_wrist = []
+        all_images = {}
         robot_states = []
         images, state = self.get_obs()
         current_pose = self.getEndEffectorPose()
@@ -661,28 +923,25 @@ class ICILEnv(SimpleEnv):
         # robot_states.append(state)
         # robot_states.append(np.concatenate([state[:3], [state[-1]]])) 
         robot_states.append(np.concatenate([state[:7], [state[-1]]])) 
-        images_xz.append(images["xz"])
-        images_yz.append(images["yz"])
-        images_xy.append(images["xy"])
-        images_wrist.append(images["wrist"])
+        for key, value in images.items():
+            if key not in all_images:
+                all_images[key] = []
+            all_images[key].append(value)
 
         # Step the environment
         self.step(abs_action)
 
         # Remove the attachment
         self.remove_attachment(object_id)
-        return actions, images_xz, images_yz, images_xy, images_wrist, robot_states
-    
+        return actions, all_images, robot_states
+
     def grasp(self, object_id):
         """
         Grasp the object. Close the gripper and attach the object to the end effector.
         """
         # Collect observations, actions, and images
         actions = []
-        images_xz = []
-        images_yz = []
-        images_xy = []
-        images_wrist = []
+        all_images = {}
         robot_states = []
         images, state = self.get_obs()
         current_pose = self.getEndEffectorPose()
@@ -694,18 +953,17 @@ class ICILEnv(SimpleEnv):
         # robot_states.append(state)
         # robot_states.append(np.concatenate([state[:3], [state[-1]]])) 
         robot_states.append(np.concatenate([state[:7], [state[-1]]])) 
-        images_xz.append(images["xz"])
-        images_yz.append(images["yz"])
-        images_xy.append(images["xy"])
-        images_wrist.append(images["wrist"])
-
+        for key, value in images.items():
+            if key not in all_images:
+                all_images[key] = []
+            all_images[key].append(value)
         # Step the environment
         self.step(abs_action)
 
         # Add the attachment
         if object_id != -1:
             self.add_attachment(object_id)
-        return actions, images_xz, images_yz, images_xy, images_wrist, robot_states
+        return actions, all_images, robot_states
 
     def close(self):
         """
