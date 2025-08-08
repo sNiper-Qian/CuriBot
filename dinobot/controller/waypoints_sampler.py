@@ -3,7 +3,7 @@ from scipy.spatial.transform import Rotation as R
 
 GRASP_CODE = np.ones(7)
 RELEASE_CODE = np.zeros(7)
-TASK_TYPES = ['pick_and_place', 'move_to_target', 'push', 'pull', 'pick']
+TASK_TYPES = ['pick_and_place', 'pick_and_place', 'move_to_target', 'move_to_target', 'push', 'pull', 'pick']
 
 def euler_to_quaternion(x, y, z):
     """
@@ -177,17 +177,17 @@ class PushWaypointSampler:
         """
         object_id = 0
         # Sample a random contact point
-        sampled_contact_point = sample_pose_on_sphere(distance_range=(0.15, 0.3), phi_range=(np.pi/2-0.3, np.pi/2))
+        sampled_contact_point = sample_pose_on_sphere(distance_range=(0.05, 0.15), phi_range=(np.pi/2-0.3, np.pi/2))
 
         rel_direction = sampled_contact_point[:3].copy()
         rel_direction /= np.linalg.norm(rel_direction)  # Normalize the direction vector
 
         # Pre-push: stand-off before contact
-        pre_push = np.random.uniform(0.05, 0.2) * rel_direction.copy()
+        pre_push = np.random.uniform(0.15, 0.3) * rel_direction.copy()
         pre_push = np.concatenate([pre_push, sampled_contact_point[3:]])  # Keep orientation as (1, 0, 0, 0)
 
         # Post-push: endpoint after sliding the object along the push direction
-        post_push = -np.random.uniform(0.15, 0.3) * rel_direction.copy()
+        post_push = -np.random.uniform(0.25, 0.35) * rel_direction.copy()
         post_push = np.concatenate([post_push, sampled_contact_point[3:]])  # Keep orientation as (1, 0, 0, 0)
 
         # Assemble and return waypoints
@@ -221,13 +221,13 @@ class PullWaypointSampler:
         """
         object_id = 0
         # Sample a random contact point
-        sampled_contact_point = sample_pose_on_sphere(distance_range=(0.05, 0.2), phi_range=(np.pi/2-0.3, np.pi/2))
+        sampled_contact_point = sample_pose_on_sphere(distance_range=(0.05, 0.15), phi_range=(np.pi/2-0.3, np.pi/2))
 
         rel_direction = sampled_contact_point[:3].copy()
         rel_direction /= np.linalg.norm(rel_direction)  # Normalize the direction vector
 
         # Pre-push: stand-off before contact
-        post_pull = np.random.uniform(0.15, 0.3) * rel_direction.copy()
+        post_pull = np.random.uniform(0.25, 0.35) * rel_direction.copy()
         post_pull = np.concatenate([post_pull, sampled_contact_point[3:]])  # Keep orientation as (1, 0, 0, 0)
 
         # Assemble and return waypoints

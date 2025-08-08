@@ -4,17 +4,17 @@ import numpy as np
 import h5py
 import os
 
-dataset_dir = "dataset_3d"
+dataset_dir = "../dataset_rlbench"
 # Create the dataset directory if it doesn't exist
 if not os.path.exists(dataset_dir):
     os.makedirs(dataset_dir)
 
 env = RLBenchEnv(render=False, Test_env=True)
-# Get the recorded data from the pickle file
-env.set_visualizer_camera()
+# # Get the recorded data from the pickle file
+# env.set_visualizer_camera()
 # Add off-screen cameras
-env.add_camera_from_calib("/home/cqian/RLBench/camera_params/front_camera.yaml")
-env.add_camera_from_calib("/home/cqian/RLBench/camera_params/side_camera.yaml")
+env.add_camera_from_calib("camera_params/front_camera.yaml")
+env.add_camera_from_calib("camera_params/side_camera.yaml")
 # env.add_camera("xz")
 # env.add_camera("yz")
 # env.add_camera("xy")
@@ -22,7 +22,7 @@ env.add_camera_from_calib("/home/cqian/RLBench/camera_params/side_camera.yaml")
 num_episodes = 1000
 num_trajectories = 2
 success_cnt = 0
-rounds = 0
+rounds = 2
 max_length = 0
 
 global_min_action = np.array([np.inf]*8)
@@ -119,8 +119,8 @@ while True:
             global_max_action = np.maximum(global_max_action, max_action)
             global_min_robot_state = np.minimum(global_min_robot_state, min_robot_state)
             global_max_robot_state = np.maximum(global_max_robot_state, max_robot_state)
-            # print(f"Min Action: {global_min_action}, Max Action: {global_max_action}, "
-            #       f"Min Robot State: {global_min_robot_state}, Max Robot State: {global_max_robot_state}")
+            print(f"Min Action: {global_min_action}, Max Action: {global_max_action}, "
+                  f"Min Robot State: {global_min_robot_state}, Max Robot State: {global_max_robot_state}")
 
             datas.append(data)
             length = len(actions_all)

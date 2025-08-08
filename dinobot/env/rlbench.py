@@ -14,14 +14,17 @@ import random
 import trimesh
 from trimesh.transformations import rotation_matrix
 from scipy.spatial import cKDTree
+import json
 
 class RLBenchEnv(ICILEnv):
     def __init__(self, render=False, Test_env=False):
         super().__init__(render, Test_env)
         # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # self.objects_paths = self.get_objects_paths("assets/pybullet_object_models/ycb_objects")
-        self.objects_paths, self.with_texture = self.get_objects_paths("ShapeNetExtracted")
-        self.texture_paths = self.get_texture_paths("textures")
+        # self.objects_paths, self.with_texture = self.get_objects_paths("../ShapeNetExtracted")
+        with open("filtered_ShapeNet.json", "r") as f:
+            self.objects_paths = json.load(f)
+        self.texture_paths = self.get_texture_paths("../textures/dtd/images/")
         self.cameras = {}
         self.waypoints_sampler = VersatileWaypointSampler()
         self.object_ids = []
@@ -114,14 +117,15 @@ class RLBenchEnv(ICILEnv):
             basePosition=[0, 0, 0],          # where to place your mesh
             baseOrientation=[0, 0, 0, 1]       # quaternion (x, y, z, w)
         )
-        if not self.with_texture[obj_path]:
-            # randomly choose a texture from the texture paths
-            if texture_index is None:
-                texture_index = random.choice([i for i in range(len(self.texture_paths))])
-            texUid = p.loadTexture(self.texture_paths[texture_index])
-            p.changeVisualShape(object_id, -1, textureUniqueId=texUid)
-        else:
-            texture_index = -1
+        texture_index = -1
+        # if not self.with_texture[obj_path]:
+        #     # randomly choose a texture from the texture paths
+        #     if texture_index is None:
+        #         texture_index = random.choice([i for i in range(len(self.texture_paths))])
+        #     texUid = p.loadTexture(self.texture_paths[texture_index])
+        #     p.changeVisualShape(object_id, -1, textureUniqueId=texUid)
+        # else:
+        #     texture_index = -1
 
         return object_id, scale, texture_index
 
@@ -375,6 +379,11 @@ class RLBenchEnv(ICILEnv):
         
 
     def reset(self, obj_indices=None, waypoints=None, obj_one_init_pos=None, obj_two_init_pos=None, robot_init_pos=None, num_objects=None, object_scales=None, object_texture_indices=None):
+        p.resetSimulation()
+        # p.disconnect(self.client)
+        # self.client = p.connect(p.GUI if self.render else p.DIRECT)
+        plane_id = p.loadURDF("assets/plane/plane.urdf")
+        self.robot = p.loadURDF(self.robot_urdf, useFixedBase=True, physicsClientId=self.client)
         # Remove all attachments
         for attachment in self.attachments:
             self.remove_attachment(attachment)
@@ -397,19 +406,30 @@ class RLBenchEnv(ICILEnv):
             self.selected_obj_indices = obj_indices
         selected_objects_paths = [self.objects_paths[int(i)] for i in self.selected_obj_indices]
 
+        if waypoints is None and num_objects is None:
+            # Randomly sample waypoints in object frame
+            self.rel_waypoints, self.num_objects = self.waypoints_sampler.sample_waypoints()
+        elif waypoints is not None and num_objects is not None:
+            self.rel_waypoints = waypoints
+            self.num_objects = num_objects
+        else:
+            raise ValueError("Either waypoints or num_objects should be None, but not both.")
+
         # Load object urdfs
         is_symmetrics = []
         if object_scales is None and object_texture_indices is None:
-            for obj_path in selected_objects_paths:
+            for obj_path in selected_objects_paths[:self.num_objects]:
                 # obj_id = self.load_urdf_object(obj_path)
+                print(f"Loading object {obj_path}")
                 obj_id, scale, texture_index = self.load_obj_object(obj_path)
                 self.object_ids.append(obj_id)
                 self.object_scales.append(scale)
                 self.object_texture_indices.append(texture_index)
                 is_symmetrics.append(self.is_rotational_symmetric(trimesh.load(obj_path, force='mesh')))
         else:
-            for i, obj_path in enumerate(selected_objects_paths):
+            for i, obj_path in enumerate(selected_objects_paths[:self.num_objects]):
                 # obj_id = self.load_urdf_object(obj_path)
+                # print(f"Loading object {obj_path}")
                 obj_id, scale, texture_index = self.load_obj_object(obj_path, scale=object_scales[i], texture_index=object_texture_indices[i])
                 self.object_ids.append(obj_id)
                 self.object_scales.append(scale)
@@ -433,19 +453,22 @@ class RLBenchEnv(ICILEnv):
             self.resetBodyPose(obj_id, position, quat)
             self.obj_one_init_pos = position
         
-        for obj_id in self.object_ids[1:]:
-            if obj_two_init_pos is not None:
-                position = np.array(obj_two_init_pos)
-            else:
-                position = np.array(pos_two)
-                # position = np.array([-0.0215, -0.3, 0.8])
-            if is_symmetrics[1]:
-                angle = 0
-            else:
-                angle = np.random.uniform(0, np.pi/2)
-            quat = p.getQuaternionFromEuler([1.57, 0, angle])
-            self.resetBodyPose(obj_id, position, quat)
-            self.obj_two_init_pos = position
+        if self.num_objects == 2:
+            for obj_id in self.object_ids[1:]:
+                if obj_two_init_pos is not None:
+                    position = np.array(obj_two_init_pos)
+                else:
+                    position = np.array(pos_two)
+                    # position = np.array([-0.0215, -0.3, 0.8])
+                if is_symmetrics[1]:
+                    angle = 0
+                else:
+                    angle = np.random.uniform(0, np.pi/2)
+                quat = p.getQuaternionFromEuler([1.57, 0, angle])
+                self.resetBodyPose(obj_id, position, quat)
+                self.obj_two_init_pos = position
+        else:
+            self.obj_two_init_pos = pos_two
 
         # Randomize the robot position and orientation
         if robot_init_pos is not None:
@@ -469,18 +492,10 @@ class RLBenchEnv(ICILEnv):
 
         self.simulate_step()
 
-        if waypoints is None and num_objects is None:
-            # Randomly sample waypoints in object frame
-            self.rel_waypoints, self.num_objects = self.waypoints_sampler.sample_waypoints(object_ids=self.object_ids)
-        elif waypoints is not None and num_objects is not None:
-            self.rel_waypoints = waypoints
-            self.num_objects = num_objects
-        else:
-            raise ValueError("Either waypoints or num_objects should be None, but not both.")
-    
-        if self.num_objects == 1:
-            # remove the second object
-            p.removeBody(self.object_ids[1])
+        # if self.num_objects == 1:
+        #     # remove the second object
+        #     p.removeBody(self.object_ids[1])
+        #     self.object_ids = self.object_ids[:1]
 
         # Compute waypoints in world frame
         abs_waypoints = []
@@ -872,7 +887,7 @@ class RLBenchEnv(ICILEnv):
             current_pose = self.getEndEffectorPose()
             # Convert the action to a relative action based on the current pose
             rel_action = self.get_relative_action(abs_action, current_pose)
-            abs_action = self.apply_relative_action(rel_action, current_pose)
+            # abs_action = self.apply_relative_action(rel_action, current_pose)
             # actions.append(rel_action)
             actions.append(np.concatenate([rel_action[:7], [rel_action[-1]]]))
             # robot_states.append(state)

@@ -8,3 +8,4 @@ imgs/
 ShapeNetExtracted/
 textures/
 *.h5
+*.gz
