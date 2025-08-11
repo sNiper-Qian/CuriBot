@@ -22,7 +22,7 @@ env.add_camera_from_calib("camera_params/side_camera.yaml")
 num_episodes = 1000
 num_trajectories = 2
 success_cnt = 0
-rounds = 2
+rounds = 0
 max_length = 0
 
 global_min_action = np.array([np.inf]*8)
@@ -32,6 +32,8 @@ global_max_robot_state = np.array([-np.inf]*8)
 
 while True:
     rounds += 1
+    render_cnt = 0
+    hard_reset = False
     for ep in range(num_episodes):
         seed = (ep + rounds * num_episodes) % 1000000
         np.random.seed(seed)
@@ -43,15 +45,21 @@ while True:
         object_texture_indices = None
         success = True
         for traj in range(num_trajectories):
+            if render_cnt > 20:
+                hard_reset = True
+                render_cnt = 0
+            else:
+                hard_reset = False
+                render_cnt += 1
             if obj_indices is None and rel_waypoints is None and num_objects is None:
-                _, _, info = env.reset()
+                _, _, info = env.reset(hard_reset=hard_reset)
                 obj_indices = info["selected_obj_indices"]
                 rel_waypoints = info["rel_waypoints"]
                 num_objects = info["num_objects"]
                 object_scales = info["object_scales"]
                 object_texture_indices = info["object_texture_indices"]
             else:
-                _, _, info = env.reset(obj_indices=obj_indices, waypoints=rel_waypoints, num_objects=num_objects, object_scales=object_scales, object_texture_indices=object_texture_indices)
+                _, _, info = env.reset(obj_indices=obj_indices, waypoints=rel_waypoints, num_objects=num_objects, object_scales=object_scales, object_texture_indices=object_texture_indices, hard_reset=hard_reset)
             obj_one_init_pos = info["obj_one_init_pos"]
             obj_two_init_pos = info["obj_two_init_pos"]
             robot_init_pos = info["robot_init_pos"]

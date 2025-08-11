@@ -83,6 +83,7 @@ class SimpleEnv:
             else:
                 # fallback name if pkgutil lookup fails
                 p.loadPlugin("eglRendererPlugin", physicsClientId=self.client)
+        p.setPhysicsEngineParameter(enableFileCaching=0, physicsClientId=self.client) 
         plane_id = p.loadURDF("assets/plane/plane.urdf")
         p.setTimeStep(1 / 1000, physicsClientId=self.client)
         # p.setPhysicsEngineParameter(solverResidualThreshold=0, physicsClientId=self.client)

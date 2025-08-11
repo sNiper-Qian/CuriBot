@@ -14,20 +14,20 @@ import random
 import trimesh
 from trimesh.transformations import rotation_matrix
 from scipy.spatial import cKDTree
+import time
 import json
+import math
 
 class RLBenchEnv(ICILEnv):
     def __init__(self, render=False, Test_env=False):
         super().__init__(render, Test_env)
-        # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        # self.objects_paths = self.get_objects_paths("assets/pybullet_object_models/ycb_objects")
-        # self.objects_paths, self.with_texture = self.get_objects_paths("../ShapeNetExtracted")
-        with open("filtered_ShapeNet.json", "r") as f:
-            self.objects_paths = json.load(f)
-        self.texture_paths = self.get_texture_paths("../textures/dtd/images/")
+        self.objects_paths, self.with_texture = self.get_objects_paths("../ShapeNetExtracted")
+        # self.objects_paths, self.with_texture = self.get_objects_paths("ShapeNetExtracted")
+        self.texture_paths = self.get_texture_paths("../textures/dtd/images")
         self.cameras = {}
         self.waypoints_sampler = VersatileWaypointSampler()
         self.object_ids = []
+        self.slow_object_paths = []
         # print("Objects Paths: ", self.objects_paths)
     
     def get_texture_paths(self, texture_path):
@@ -40,6 +40,34 @@ class RLBenchEnv(ICILEnv):
                 if file.endswith('.png') or file.endswith('.jpg'):
                     texture_files.append(os.path.join(root, file))
         return texture_files
+    
+    def load_urdf_object(self, urdf_path, position=(0, 0, 0), orientation=(0, 0, 0, 1), max_scale=0.3, scale=None, texture_index=None):
+        """
+        Load a URDF model and add it to the environment.
+        
+        Args:
+            urdf_path (str): Path to the URDF file.
+            position (tuple): Initial position of the object (x, y, z).
+            orientation (tuple): Initial orientation as a quaternion (x, y, z, w).
+        """
+        if scale is None:
+            obj_path = urdf_path.replace(".urdf", ".obj")
+            max_scale = self.compute_scale_from_obj(obj_path, max_size=max_scale)
+            scale = np.random.uniform(0.6, 1.0) * max_scale
+        # print(f"Loading URDF object from {urdf_path} at position {position} with orientation {orientation} and global scale {scale}")
+        object_id = p.loadURDF(urdf_path, basePosition=position, baseOrientation=orientation, globalScaling=scale)
+        # set visible
+        p.changeVisualShape(object_id, -1, rgbaColor=[1, 1, 1, 1])
+        self.objects.append(object_id)
+        if not self.with_texture[urdf_path]:
+            # randomly choose a texture from the texture paths
+            if texture_index is None:
+                texture_index = random.choice([i for i in range(len(self.texture_paths))])
+            texUid = p.loadTexture(self.texture_paths[texture_index])
+            p.changeVisualShape(object_id, -1, textureUniqueId=texUid)
+        else:
+            texture_index = -1
+        return object_id, scale, texture_index
 
     def get_objects_paths(self, objects_path):
         """
@@ -49,7 +77,7 @@ class RLBenchEnv(ICILEnv):
         urdf_files = []
         for root, dirs, files in os.walk(objects_path):
             for file in files:
-                if file.endswith('.obj'):
+                if file.endswith('.urdf'):
                     # Construct the full path to the URDF file and add it to the list.
                     urdf_files.append(os.path.join(root, file))
                     # Check if the file has a texture (whether it has an images folder in the upper directory)
@@ -117,15 +145,14 @@ class RLBenchEnv(ICILEnv):
             basePosition=[0, 0, 0],          # where to place your mesh
             baseOrientation=[0, 0, 0, 1]       # quaternion (x, y, z, w)
         )
-        texture_index = -1
-        # if not self.with_texture[obj_path]:
-        #     # randomly choose a texture from the texture paths
-        #     if texture_index is None:
-        #         texture_index = random.choice([i for i in range(len(self.texture_paths))])
-        #     texUid = p.loadTexture(self.texture_paths[texture_index])
-        #     p.changeVisualShape(object_id, -1, textureUniqueId=texUid)
-        # else:
-        #     texture_index = -1
+        if not self.with_texture[obj_path]:
+            # randomly choose a texture from the texture paths
+            if texture_index is None:
+                texture_index = random.choice([i for i in range(len(self.texture_paths))])
+            texUid = p.loadTexture(self.texture_paths[texture_index])
+            p.changeVisualShape(object_id, -1, textureUniqueId=texUid)
+        else:
+            texture_index = -1
 
         return object_id, scale, texture_index
 
@@ -306,9 +333,9 @@ class RLBenchEnv(ICILEnv):
         cube_size = 0.1
 
         # 2) how many cubes along each axis
-        nx = int((x_max - x_min) / cube_size)   # 8
-        ny = int((y_max - y_min) / cube_size)   # 8
-        nz = int((z_max - z_min) / cube_size)   # 3
+        nx = round((x_max - x_min) / cube_size)
+        ny = round((y_max - y_min) / cube_size)
+        nz = round((z_max - z_min) / cube_size)
 
         # 3) list of all cube‐indices
         all_cubes = [(i, j, k)
@@ -376,22 +403,23 @@ class RLBenchEnv(ICILEnv):
                 return False
         print("Mesh is rotationally symmetric.")
         return True
-        
 
-    def reset(self, obj_indices=None, waypoints=None, obj_one_init_pos=None, obj_two_init_pos=None, robot_init_pos=None, num_objects=None, object_scales=None, object_texture_indices=None):
-        p.resetSimulation()
-        # p.disconnect(self.client)
-        # self.client = p.connect(p.GUI if self.render else p.DIRECT)
-        plane_id = p.loadURDF("assets/plane/plane.urdf")
-        self.robot = p.loadURDF(self.robot_urdf, useFixedBase=True, physicsClientId=self.client)
-        # Remove all attachments
-        for attachment in self.attachments:
-            self.remove_attachment(attachment)
+    def reset(self, obj_indices=None, waypoints=None, obj_one_init_pos=None, obj_two_init_pos=None, robot_init_pos=None, num_objects=None, object_scales=None, object_texture_indices=None, hard_reset=False):
+        if hard_reset:
+            p.disconnect()
+            self.setup_env()
+        else:
+            p.resetSimulation()
+            plane_id = p.loadURDF("assets/plane/plane.urdf")
+            self.robot = p.loadURDF(self.robot_urdf, useFixedBase=True, physicsClientId=self.client)
         if self.object_ids != []:
             body_ids = [p.getBodyUniqueId(i) for i in range(p.getNumBodies())]
             # Remove all objects except env and robot
             for obj_id in body_ids[2:]:
                 p.removeBody(obj_id)
+        # Remove all attachments
+        for attachment in self.attachments:
+            self.remove_attachment(attachment)
 
         self.object_ids = []
         self.object_scales = []
@@ -421,20 +449,37 @@ class RLBenchEnv(ICILEnv):
             for obj_path in selected_objects_paths[:self.num_objects]:
                 # obj_id = self.load_urdf_object(obj_path)
                 print(f"Loading object {obj_path}")
-                obj_id, scale, texture_index = self.load_obj_object(obj_path)
+                # obj_id, scale, texture_index = self.load_obj_object(obj_path)
+                obj_id, scale, texture_index = self.load_urdf_object(obj_path)   
                 self.object_ids.append(obj_id)
                 self.object_scales.append(scale)
                 self.object_texture_indices.append(texture_index)
-                is_symmetrics.append(self.is_rotational_symmetric(trimesh.load(obj_path, force='mesh')))
+                # is_symmetrics.append(0)
+                is_symmetrics.append(self.is_rotational_symmetric(trimesh.load(obj_path.replace(".urdf", ".obj"), force='mesh')))
         else:
             for i, obj_path in enumerate(selected_objects_paths[:self.num_objects]):
                 # obj_id = self.load_urdf_object(obj_path)
-                # print(f"Loading object {obj_path}")
-                obj_id, scale, texture_index = self.load_obj_object(obj_path, scale=object_scales[i], texture_index=object_texture_indices[i])
+                print(f"Loading object {obj_path}")
+                # obj_id, scale, texture_index = self.load_obj_object(obj_path, scale=object_scales[i], texture_index=object_texture_indices[i])
+                
+                time_start = time.time()
+                obj_id, scale, texture_index = self.load_urdf_object(obj_path, scale=object_scales[i], texture_index=object_texture_indices[i]) 
+                time_end = time.time()
+                time_taken = time_end - time_start
+                print("Time taken", time_taken)
+                if time_taken > 3.:
+                    # add the path to json
+                    self.slow_object_paths.append(obj_path)
+                    with open("slow_objects.json", "w") as f:
+                        json.dump(self.slow_object_paths, f, indent=4)
+                    # exclude the path from the next runs
+                    self.objects_paths.remove(obj_path)
+
                 self.object_ids.append(obj_id)
                 self.object_scales.append(scale)
                 self.object_texture_indices.append(texture_index)
-                is_symmetrics.append(self.is_rotational_symmetric(trimesh.load(obj_path, force='mesh')))
+                # is_symmetrics.append(0)
+                is_symmetrics.append(self.is_rotational_symmetric(trimesh.load(obj_path.replace(".urdf", ".obj"), force='mesh')))
 
         # Randomize the object position and orientation
         pos_one, pos_two = self.sample_object_positions()
@@ -581,10 +626,10 @@ class RLBenchEnv(ICILEnv):
 
     def find_nearest_object(self):
         distance = float("inf")
-        ee_pos = self.getEndEffectorPose()
+        ee_pos = self.getEndEffectorPose()[:3]
         ee_pos = np.array(ee_pos)
         for obj_id in self.object_ids: 
-            obj_pos = self.getBodyPose(obj_id)
+            obj_pos = self.getBodyPose(obj_id)[:3]
             obj_pos = np.array(obj_pos)
             dist = np.linalg.norm(ee_pos - obj_pos)
             if dist < distance:
@@ -630,15 +675,16 @@ class RLBenchEnv(ICILEnv):
         Returns:
             bool: True if the episode should be terminated, False otherwise.
         """
-        obj_one_pos = self.getBodyPose(self.object_ids[0])
-        obj_one_pos = np.array(obj_one_pos[:3])
-        obj_two_pos = self.getBodyPose(self.object_ids[1])
-        obj_two_pos = np.array(obj_two_pos[:3])
-        ee_pos = self.getEndEffectorPose()
-        ee_pos = np.array(ee_pos[:3])
-        distance_1 = np.linalg.norm(ee_pos - obj_two_pos)
-        distance_2 = np.linalg.norm(ee_pos - obj_one_pos)
-        return distance_1 < 0.1 and distance_2 < 0.1
+        # obj_one_pos = self.getBodyPose(self.object_ids[0])
+        # obj_one_pos = np.array(obj_one_pos[:3])
+        # obj_two_pos = self.getBodyPose(self.object_ids[1])
+        # obj_two_pos = np.array(obj_two_pos[:3])
+        # ee_pos = self.getEndEffectorPose()
+        # ee_pos = np.array(ee_pos[:3])
+        # distance_1 = np.linalg.norm(ee_pos - obj_two_pos)
+        # distance_2 = np.linalg.norm(ee_pos - obj_one_pos)
+        # return distance_1 < 0.1 and distance_2 < 0.1
+        return False
 
     def get_move_toward_action(self):
         joint_state, obj_pos, obj_ori = self.get_state()
