@@ -22,7 +22,7 @@ def get_objects_paths(objects_path):
     return urdf_files, with_texture
 
 if __name__ == "__main__":
-    objects_path = "../ShapeNetExtracted"
+    objects_path = "ShapeNetExtracted"
     urdf_files, with_texture = get_objects_paths(objects_path)
     filtered_urdf_files = []
     # Filter out objects without textures
